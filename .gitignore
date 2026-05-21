@@ -88,3 +88,5 @@ tempCodeRunnerFile.py
 
 # Project-specific
 credentials.json
+client_secrets.json
+authorized_user.json

@@ -47,12 +47,16 @@ class SheetsSource(CourseSource):
         settings: Settings,
         worksheet: str = "Sheet1",
         credentials_file: str = "credentials.json",
+        oauth_secrets_file: str = "client_secrets.json",
+        authorized_user_file: str = "authorized_user.json",
     ):
         self.spreadsheet_id = spreadsheet_id
         self.moodle = client
         self.settings = settings
         self.worksheet = worksheet
         self.credentials_file = credentials_file
+        self.oauth_secrets_file = oauth_secrets_file
+        self.authorized_user_file = authorized_user_file
 
     def load(self) -> list[CourseSpec]:
         category_map = self._build_category_map()
@@ -131,8 +135,16 @@ class SheetsSource(CourseSource):
         try:
             if self.credentials_file and Path(self.credentials_file).is_file():
                 gc = gspread.service_account(filename=self.credentials_file)
+            elif self.oauth_secrets_file and Path(self.oauth_secrets_file).is_file():
+                gc = gspread.oauth(
+                    credentials_filename=self.oauth_secrets_file,
+                    authorized_user_filename=self.authorized_user_file,
+                )
             else:
-                gc = self._auth_with_adc()
+                raise SourceError(
+                    "No Google credentials found. Provide 'client_secrets.json' (OAuth) "
+                    "or 'credentials.json' (service account) in the project directory."
+                )
         except SourceError:
             raise
         except Exception as e:
@@ -140,9 +152,16 @@ class SheetsSource(CourseSource):
 
         try:
             sh = gc.open_by_key(self.spreadsheet_id)
-            ws = sh.worksheet(self.worksheet)
         except gspread.exceptions.SpreadsheetNotFound as e:
             raise SourceError(f"Spreadsheet not found: {self.spreadsheet_id}") from e
+        except gspread.exceptions.APIError as e:
+            raise SourceError(
+                f"Cannot access spreadsheet {self.spreadsheet_id}: {e.response.status_code} — "
+                f"make sure the sheet is shared with your Google account"
+            ) from e
+
+        try:
+            ws = sh.worksheet(self.worksheet)
         except gspread.exceptions.WorksheetNotFound as e:
             raise SourceError(
                 f"Worksheet {self.worksheet!r} not found in {self.spreadsheet_id}"

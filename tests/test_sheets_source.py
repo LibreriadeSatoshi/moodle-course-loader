@@ -116,7 +116,7 @@ def test_google_auth_error_raises_source_error(mock_client: MagicMock, settings:
         client=mock_client,
         settings=settings,
         credentials_file="nonexistent_credentials.json",
+        oauth_secrets_file="nonexistent_client_secrets.json",
     )
-    with patch("google.auth.default", side_effect=Exception("No credentials found")):
-        with pytest.raises(SourceError, match="Application Default Credentials"):
-            source.load()
+    with pytest.raises(SourceError, match="No Google credentials found"):
+        source.load()
