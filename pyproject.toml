@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moodle-loader"
+version = "0.1.0"
+description = "CLI to load Moodle courses from YAML or Google Sheets"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "typer>=0.12",
+    "pyyaml>=6.0",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "responses>=0.25",
+]
+sheets = [
+    "gspread>=6.0",
+    "google-auth>=2.27",
+]
+
+[project.scripts]
+moodle-loader = "moodle_loader.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

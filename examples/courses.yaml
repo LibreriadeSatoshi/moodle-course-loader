@@ -1,0 +1,22 @@
+# Example course definitions for `moodle-loader load`.
+#
+# Known templates:
+#   10 = MOOC
+#   18 = SEMINAR
+# Known categories:
+#   2  = Bitcoin for Everyone
+
+defaults:
+  category_id: 2
+  visible: false
+
+courses:
+  - template_id: 10
+    fullname: "Bitcoin Basics — May 2026 Cohort"
+    shortname: "bitcoin-basics-2026-05"
+    summary: "Introductory Bitcoin course generated automatically."
+
+  - template_id: 18
+    fullname: "Lightning Seminar — June 2026"
+    shortname: "lightning-seminar-2026-06"
+    summary: "Advanced seminar on the Lightning Network."
