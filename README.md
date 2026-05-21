@@ -1,4 +1,4 @@
-# Moodle Coruse Loader
+# Moodle Course Loader
 
 CLI to automate course loading into Moodle via the Web Services API.
 
