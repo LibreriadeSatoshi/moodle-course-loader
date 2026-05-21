@@ -1,4 +1,4 @@
-# moodle-loader
+# Moodle Coruse Loader
 
 CLI to automate course loading into Moodle via the Web Services API.
 
@@ -111,5 +111,3 @@ src/moodle_loader/
 ├── models.py       # CourseSpec, LoadResult
 └── sources/        # YAML, Google Sheets
 ```
-
-The original exploration scripts live in `legacy/` for reference.
