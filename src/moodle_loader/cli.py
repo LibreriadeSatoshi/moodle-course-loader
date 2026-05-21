@@ -92,7 +92,7 @@ def load(
 @app.command(name="load-sheets")
 def load_sheets(
     spreadsheet_id: str = typer.Argument(..., help="Google Spreadsheet ID"),
-    worksheet: str = typer.Option("Sheet1", "--worksheet", "-w", help="Worksheet name"),
+    worksheet: str = typer.Option(None, "--worksheet", "-w", help="Worksheet name (default: SHEETS_WORKSHEET from .env)"),
     credentials_file: str = typer.Option("credentials.json", "--credentials-file", "-c", help="Path to Google Service Account credentials JSON"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not call the API; validate only"),
 ) -> None:
@@ -109,7 +109,7 @@ def load_sheets(
         spreadsheet_id=spreadsheet_id,
         client=client,
         settings=settings,
-        worksheet=worksheet,
+        worksheet=worksheet or settings.sheets_worksheet,
         credentials_file=credentials_file,
     )
     loader = CourseLoader(client=None if dry_run else client, dry_run=dry_run)

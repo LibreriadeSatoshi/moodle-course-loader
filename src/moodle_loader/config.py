@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     moodle_token: str = Field(..., description="Web Services token")
     default_template_id: int = Field(20, description="Template course ID used when sheet row has no template_id")
     default_category_name: str = Field("Bitcoin 4 Everyone", description="Fallback category name when Path is not found in Moodle")
+    sheets_worksheet: str = Field("Sheet1", description="Worksheet name to read from Google Sheets")
 
     model_config = SettingsConfigDict(
         env_file=".env",
