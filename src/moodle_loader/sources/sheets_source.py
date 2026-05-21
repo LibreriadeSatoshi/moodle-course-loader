@@ -167,7 +167,21 @@ class SheetsSource(CourseSource):
                 f"Worksheet {self.worksheet!r} not found in {self.spreadsheet_id}"
             ) from e
 
-        return ws.get_all_records(default_blank="")
+        all_values = ws.get_all_values()
+        if not all_values:
+            return []
+        headers = all_values[0]
+        rows = []
+        for raw_row in all_values[1:]:
+            row: dict[str, str] = {}
+            for col_idx, header in enumerate(headers):
+                if not header:
+                    continue
+                value = raw_row[col_idx] if col_idx < len(raw_row) else ""
+                if header not in row:
+                    row[header] = value
+            rows.append(row)
+        return rows
 
     def _auth_with_adc(self) -> gspread.Client:
         try:
