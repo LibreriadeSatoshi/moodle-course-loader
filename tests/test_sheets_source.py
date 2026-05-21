@@ -117,6 +117,6 @@ def test_google_auth_error_raises_source_error(mock_client: MagicMock, settings:
         settings=settings,
         credentials_file="nonexistent_credentials.json",
     )
-    with patch("gspread.service_account", side_effect=Exception("File not found")):
-        with pytest.raises(SourceError, match="Could not authenticate"):
+    with patch("google.auth.default", side_effect=Exception("No credentials found")):
+        with pytest.raises(SourceError, match="Application Default Credentials"):
             source.load()

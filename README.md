@@ -39,33 +39,60 @@ moodle-loader load-sheets <spreadsheet_id> --worksheet "Hoja 1" --dry-run
 
 ## Google Sheets setup
 
-Authentication uses a **Google Service Account** — a robot user that accesses the sheet without any interactive login.
+Two authentication options are supported. Use whichever works in your environment.
 
-### 1. Create a Google Cloud project and enable the API
+---
+
+### Option A — Application Default Credentials (recommended)
+
+No key file needed. Uses your own Google account via `gcloud`.
+
+**1. Enable the Sheets API**
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Create a new project (or reuse an existing one)
-3. Navigate to **APIs & Services → Library**
-4. Search for **Google Sheets API** and click **Enable**
+2. Create or select a project
+3. **APIs & Services → Library → Google Sheets API → Enable**
 
-### 2. Create a Service Account and download credentials
+**2. Authenticate once from the terminal**
 
-1. Go to **APIs & Services → Credentials**
-2. Click **Create credentials → Service Account**
-3. Give it a name (e.g. `moodle-loader`) and click **Done**
-4. Click on the new service account → **Keys** tab → **Add key → Create new key → JSON**
-5. Download the file and save it as `credentials.json` in the project root
+```bash
+gcloud auth application-default login \
+  --scopes=https://www.googleapis.com/auth/spreadsheets.readonly
+```
+
+A browser window opens — log in with your Google account. Done.
+
+**3. Share the Sheet with your Google account**
+
+Make sure the account you logged in with has at least **Viewer** access to the Sheet.
+
+---
+
+### Option B — Service Account key file
+
+> Use this only if your organisation allows service account key creation.
+> If you see `iam.disableServiceAccountKeyCreation`, use Option A instead.
+
+**1. Enable the Sheets API** (same steps as above)
+
+**2. Create a Service Account and download credentials**
+
+1. **APIs & Services → Credentials → Create credentials → Service Account**
+2. Give it a name (e.g. `moodle-loader`) and click **Done**
+3. Click the service account → **Keys → Add key → Create new key → JSON**
+4. Save the downloaded file as `credentials.json` in the project root
 
 > `credentials.json` is in `.gitignore` — never commit it.
 
-### 3. Share your Google Sheet with the Service Account
+**3. Share the Sheet with the Service Account**
 
-1. Open the `credentials.json` file and copy the `client_email` value
-   (looks like `moodle-loader@your-project.iam.gserviceaccount.com`)
-2. Open your Google Sheet → **Share**
-3. Paste the email and grant **Viewer** access (read-only is enough)
+1. Copy the `client_email` from `credentials.json`
+   (e.g. `moodle-loader@your-project.iam.gserviceaccount.com`)
+2. Open your Google Sheet → **Share**, paste the email, grant **Viewer** access
 
-### 4. Configure the sheet columns
+---
+
+### Configure the sheet columns
 
 The sheet must have a header row with at least these columns:
 

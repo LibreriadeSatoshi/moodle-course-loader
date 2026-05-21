@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from pathlib import Path
 
 import gspread
 
@@ -128,7 +129,12 @@ class SheetsSource(CourseSource):
 
     def _fetch_rows(self) -> list[dict[str, str]]:
         try:
-            gc = gspread.service_account(filename=self.credentials_file)
+            if self.credentials_file and Path(self.credentials_file).is_file():
+                gc = gspread.service_account(filename=self.credentials_file)
+            else:
+                gc = self._auth_with_adc()
+        except SourceError:
+            raise
         except Exception as e:
             raise SourceError(f"Could not authenticate with Google: {e}") from e
 
@@ -143,3 +149,25 @@ class SheetsSource(CourseSource):
             ) from e
 
         return ws.get_all_records(default_blank="")
+
+    def _auth_with_adc(self) -> gspread.Client:
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+        except ImportError as e:
+            raise SourceError(
+                "google-auth is required for ADC. Run: pip install moodle-loader[sheets]"
+            ) from e
+
+        scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+        try:
+            credentials, _ = google.auth.default(scopes=scopes)
+            credentials.refresh(Request())
+        except Exception as e:
+            raise SourceError(
+                f"Application Default Credentials not found or expired. "
+                f"Run: gcloud auth application-default login "
+                f"--scopes=https://www.googleapis.com/auth/spreadsheets.readonly\n{e}"
+            ) from e
+
+        return gspread.authorize(credentials)
