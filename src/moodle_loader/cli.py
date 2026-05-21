@@ -22,6 +22,40 @@ console = Console()
 error_console = Console(stderr=True, style="bold red")
 
 
+def _print_results(results: list, *, verbose: bool = False) -> None:
+    from moodle_loader.models import LoadResult
+
+    status_style = {"created": "green", "skipped": "yellow", "failed": "red"}
+    table = Table(title="Results", show_lines=False)
+    table.add_column("Shortname", style="cyan")
+    if verbose:
+        table.add_column("Full name")
+        table.add_column("Category ID")
+        table.add_column("Template ID")
+        table.add_column("Summary")
+    table.add_column("Status")
+    table.add_column("Course ID")
+    table.add_column("Message")
+
+    for r in results:
+        row = [r.spec.shortname]
+        if verbose:
+            row += [
+                r.spec.fullname,
+                str(r.spec.category_id),
+                str(r.spec.template_id),
+                r.spec.summary[:60] + "…" if len(r.spec.summary) > 60 else r.spec.summary,
+            ]
+        row += [
+            f"[{status_style[r.status]}]{r.status}[/]",
+            str(r.course_id) if r.course_id is not None else "-",
+            r.message,
+        ]
+        table.add_row(*row)
+
+    console.print(table)
+
+
 def _build_client() -> MoodleClient:
     try:
         settings = Settings()  # type: ignore[call-arg]
@@ -56,6 +90,7 @@ def info() -> None:
 def load(
     yaml_path: Path = typer.Argument(..., exists=False, help="Path to the courses YAML file"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not call the API; validate only"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all course fields in the results table"),
 ) -> None:
     """Load courses defined in a YAML file."""
     source = YamlSource(yaml_path)
@@ -68,21 +103,7 @@ def load(
         error_console.print(str(e))
         raise typer.Exit(code=1)
 
-    table = Table(title="Results", show_lines=False)
-    table.add_column("Shortname", style="cyan")
-    table.add_column("Status")
-    table.add_column("Course ID")
-    table.add_column("Message")
-
-    status_style = {"created": "green", "skipped": "yellow", "failed": "red"}
-    for r in results:
-        table.add_row(
-            r.spec.shortname,
-            f"[{status_style[r.status]}]{r.status}[/]",
-            str(r.course_id) if r.course_id is not None else "-",
-            r.message,
-        )
-    console.print(table)
+    _print_results(results, verbose=verbose)
 
     failed = sum(1 for r in results if r.status == "failed")
     if failed:
@@ -95,6 +116,7 @@ def load_sheets(
     worksheet: str = typer.Option(None, "--worksheet", "-w", help="Worksheet name (default: SHEETS_WORKSHEET from .env)"),
     credentials_file: str = typer.Option("credentials.json", "--credentials-file", "-c", help="Path to Google Service Account credentials JSON"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not call the API; validate only"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all course fields in the results table"),
 ) -> None:
     """Load courses from a Google Sheet."""
     try:
@@ -120,21 +142,7 @@ def load_sheets(
         error_console.print(str(e))
         raise typer.Exit(code=1)
 
-    table = Table(title="Results", show_lines=False)
-    table.add_column("Shortname", style="cyan")
-    table.add_column("Status")
-    table.add_column("Course ID")
-    table.add_column("Message")
-
-    status_style = {"created": "green", "skipped": "yellow", "failed": "red"}
-    for r in results:
-        table.add_row(
-            r.spec.shortname,
-            f"[{status_style[r.status]}]{r.status}[/]",
-            str(r.course_id) if r.course_id is not None else "-",
-            r.message,
-        )
-    console.print(table)
+    _print_results(results, verbose=verbose)
 
     failed = sum(1 for r in results if r.status == "failed")
     if failed:
