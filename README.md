@@ -14,7 +14,7 @@ pip install -e ".[dev]"
 cp .env.example .env   # fill in MOODLE_URL and MOODLE_TOKEN
 ```
 
-For Google Sheets support, install the optional extra:
+For Google Sheets support, install the optional extra packages:
 
 ```bash
 pip install -e ".[dev,sheets]"
