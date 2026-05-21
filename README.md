@@ -53,7 +53,22 @@ No key file needed. Uses your own Google account via `gcloud`.
 2. Create or select a project
 3. **APIs & Services → Library → Google Sheets API → Enable**
 
-**2. Authenticate once from the terminal**
+**2. Install the Google Cloud SDK (`gcloud`)**
+
+If you don't have `gcloud` installed yet:
+
+- **Linux/Mac:**
+  ```bash
+  curl https://sdk.cloud.google.com | bash
+  exec -l $SHELL
+  gcloud init
+  ```
+- **Mac (Homebrew):**
+  ```bash
+  brew install --cask google-cloud-sdk
+  ```
+
+**3. Authenticate once from the terminal**
 
 ```bash
 gcloud auth application-default login \
