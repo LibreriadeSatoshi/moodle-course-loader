@@ -71,8 +71,7 @@ If you don't have `gcloud` installed yet:
 **3. Authenticate once from the terminal**
 
 ```bash
-gcloud auth application-default login \
-  --scopes=https://www.googleapis.com/auth/spreadsheets.readonly
+gcloud auth application-default login
 ```
 
 A browser window opens — log in with your Google account. Done.

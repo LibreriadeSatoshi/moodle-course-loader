@@ -159,15 +159,14 @@ class SheetsSource(CourseSource):
                 "google-auth is required for ADC. Run: pip install moodle-loader[sheets]"
             ) from e
 
-        scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+        scopes = ["https://www.googleapis.com/auth/cloud-platform"]
         try:
             credentials, _ = google.auth.default(scopes=scopes)
             credentials.refresh(Request())
         except Exception as e:
             raise SourceError(
                 f"Application Default Credentials not found or expired. "
-                f"Run: gcloud auth application-default login "
-                f"--scopes=https://www.googleapis.com/auth/spreadsheets.readonly\n{e}"
+                f"Run: gcloud auth application-default login\n{e}"
             ) from e
 
         return gspread.authorize(credentials)
