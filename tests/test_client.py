@@ -81,4 +81,4 @@ def test_get_categories_returns_list(client: MoodleClient) -> None:
     assert len(cats) == 2
     assert cats[0]["name"] == "Bitcoin 4 Everyone"
     body = responses.calls[0].request.body
-    assert "wsfunction=core_course_category_get_categories" in body
+    assert "wsfunction=core_course_get_categories" in body

@@ -82,4 +82,4 @@ class MoodleClient:
         return self.call("core_course_get_contents", courseid=course_id)
 
     def get_categories(self) -> list[dict]:
-        return self.call("core_course_category_get_categories")
+        return self.call("core_course_get_categories")
