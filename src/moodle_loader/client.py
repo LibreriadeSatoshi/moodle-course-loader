@@ -83,3 +83,8 @@ class MoodleClient:
 
     def get_categories(self) -> list[dict]:
         return self.call("core_course_get_categories")
+
+    def get_course_by_shortname(self, shortname: str) -> dict | None:
+        result = self.call("core_course_get_courses_by_field", field="shortname", value=shortname)
+        courses = result.get("courses", []) if isinstance(result, dict) else []
+        return courses[0] if courses else None

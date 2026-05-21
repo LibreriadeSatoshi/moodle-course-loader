@@ -70,6 +70,30 @@ def test_delete_course_uses_array_syntax(client: MoodleClient) -> None:
 
 
 @responses.activate
+def test_get_course_by_shortname_returns_course(client: MoodleClient) -> None:
+    responses.add(
+        responses.POST,
+        REST_URL,
+        json={"courses": [{"id": 42, "shortname": "curso-x"}]},
+        status=200,
+    )
+    course = client.get_course_by_shortname("curso-x")
+    assert course is not None
+    assert course["id"] == 42
+
+
+@responses.activate
+def test_get_course_by_shortname_returns_none_when_not_found(client: MoodleClient) -> None:
+    responses.add(
+        responses.POST,
+        REST_URL,
+        json={"courses": []},
+        status=200,
+    )
+    assert client.get_course_by_shortname("inexistente") is None
+
+
+@responses.activate
 def test_get_categories_returns_list(client: MoodleClient) -> None:
     responses.add(
         responses.POST,

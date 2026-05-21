@@ -22,6 +22,16 @@ console = Console()
 error_console = Console(stderr=True, style="bold red")
 
 
+def _filter_specs(specs: list, shortname: str | None) -> list:
+    if shortname is None:
+        return specs
+    filtered = [s for s in specs if s.shortname == shortname]
+    if not filtered:
+        error_console.print(f"Shortname {shortname!r} not found in source")
+        raise typer.Exit(code=1)
+    return filtered
+
+
 def _print_results(results: list, *, verbose: bool = False) -> None:
     from moodle_loader.models import LoadResult
 
@@ -91,14 +101,16 @@ def load(
     yaml_path: Path = typer.Argument(..., exists=False, help="Path to the courses YAML file"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not call the API; validate only"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all course fields in the results table"),
+    shortname: str = typer.Option(None, "--shortname", "-s", help="Load only the course with this shortname"),
 ) -> None:
     """Load courses defined in a YAML file."""
     source = YamlSource(yaml_path)
+    specs = _filter_specs(source.load(), shortname)
     client = None if dry_run else _build_client()
     loader = CourseLoader(client=client, dry_run=dry_run)
 
     try:
-        results = loader.load(source)
+        results = loader.load_specs(specs)
     except MoodleError as e:
         error_console.print(str(e))
         raise typer.Exit(code=1)
@@ -117,6 +129,7 @@ def load_sheets(
     credentials_file: str = typer.Option("credentials.json", "--credentials-file", "-c", help="Path to Google Service Account credentials JSON"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not call the API; validate only"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all course fields in the results table"),
+    shortname: str = typer.Option(None, "--shortname", "-s", help="Load only the course with this shortname"),
 ) -> None:
     """Load courses from a Google Sheet."""
     try:
@@ -134,10 +147,11 @@ def load_sheets(
         worksheet=worksheet or settings.sheets_worksheet,
         credentials_file=credentials_file,
     )
+    specs = _filter_specs(source.load(), shortname)
     loader = CourseLoader(client=None if dry_run else client, dry_run=dry_run)
 
     try:
-        results = loader.load(source)
+        results = loader.load_specs(specs)
     except MoodleError as e:
         error_console.print(str(e))
         raise typer.Exit(code=1)

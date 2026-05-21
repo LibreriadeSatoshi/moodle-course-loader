@@ -18,7 +18,9 @@ class CourseLoader:
         self._dry_run = dry_run
 
     def load(self, source: CourseSource) -> list[LoadResult]:
-        specs: Iterable[CourseSpec] = source.load()
+        return self.load_specs(source.load())
+
+    def load_specs(self, specs: Iterable[CourseSpec]) -> list[LoadResult]:
         return [self._process(spec) for spec in specs]
 
     def _process(self, spec: CourseSpec) -> LoadResult:
@@ -29,6 +31,13 @@ class CourseLoader:
                 message="dry-run: API not called",
             )
         assert self._client is not None  # guaranteed by __init__
+        existing = self._client.get_course_by_shortname(spec.shortname)
+        if existing is not None:
+            return LoadResult(
+                spec=spec,
+                status="skipped",
+                message=f"already exists: course_id={existing['id']}",
+            )
         try:
             result = self._client.duplicate_course(
                 courseid=spec.template_id,
