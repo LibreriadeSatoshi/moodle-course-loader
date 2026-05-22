@@ -117,9 +117,17 @@ The sheet must have a header row with at least these columns:
 | `Course Name (English)` | `summary` | no |
 | `Path` | `category_id` (resolved via Moodle API) | no |
 | `template_id` | `template_id` | no (default: `DEFAULT_TEMPLATE_ID`) |
+| `Moodle Link` | written back after creation | no |
 
 Category names in `Path` are matched against Moodle category names automatically.
 If a name is not found, it falls back to `DEFAULT_CATEGORY_NAME` (configurable in `.env`).
+
+After a course is created, the Moodle course URL is automatically written to the `Moodle Link` column.
+Use `--no-writeback` to skip this step.
+
+> **Re-authentication after a scope change**: if you have an existing `authorized_user.json`
+> that was created with a read-only scope, delete it and run `moodle-loader load-sheets` again
+> to trigger a fresh OAuth flow with write access.
 
 ## YAML format
 

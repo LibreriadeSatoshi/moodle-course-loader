@@ -130,6 +130,7 @@ def load_sheets(
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not call the API; validate only"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all course fields in the results table"),
     shortname: str = typer.Option(None, "--shortname", "-s", help="Load only the course with this shortname"),
+    no_writeback: bool = typer.Option(False, "--no-writeback", help="Skip writing the Moodle URL back to the Sheet"),
 ) -> None:
     """Load courses from a Google Sheet."""
     try:
@@ -157,6 +158,12 @@ def load_sheets(
         raise typer.Exit(code=1)
 
     _print_results(results, verbose=verbose)
+
+    if not dry_run and not no_writeback:
+        for r in results:
+            if r.status == "created" and r.course_id is not None:
+                url = f"{settings.moodle_url}/course/view.php?id={r.course_id}"
+                source.write_moodle_link(r.spec.shortname, url)
 
     failed = sum(1 for r in results if r.status == "failed")
     if failed:

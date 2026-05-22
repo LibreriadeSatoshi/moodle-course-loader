@@ -20,6 +20,7 @@ COL_SHORTNAME = "CODE"
 COL_SUMMARY = "Course Name (English)"
 COL_PATH = "Path"
 COL_TEMPLATE_ID = "template_id"
+COL_MOODLE_LINK = "Moodle Link"
 
 
 class SheetsSource(CourseSource):
@@ -58,12 +59,24 @@ class SheetsSource(CourseSource):
         self.oauth_secrets_file = oauth_secrets_file
         self.authorized_user_file = authorized_user_file
 
+        self._ws: gspread.Worksheet | None = None
+        self._row_map: dict[str, int] = {}
+        self._moodle_link_col: int | None = None
+
     def load(self) -> list[CourseSpec]:
         category_map = self._build_category_map()
-        rows = self._fetch_rows()
+        rows, headers = self._fetch_rows()
+
+        # Detect Moodle Link column index (1-based for gspread)
+        self._moodle_link_col = next(
+            (i + 1 for i, h in enumerate(headers) if h == COL_MOODLE_LINK), None
+        )
+        if self._moodle_link_col is None:
+            logger.warning("Column %r not found in sheet — write-back will be skipped", COL_MOODLE_LINK)
 
         specs: list[CourseSpec] = []
-        for i, row in enumerate(rows):
+        for data_idx, row in enumerate(rows):
+            sheet_row = data_idx + 2  # row 1 is header; data starts at row 2
             fullname = row.get(COL_FULLNAME, "").strip()
             shortname = row.get(COL_SHORTNAME, "").strip()
 
@@ -71,14 +84,21 @@ class SheetsSource(CourseSource):
                 continue
 
             if not fullname:
-                logger.warning("row %d: missing '%s', skipping", i, COL_FULLNAME)
+                logger.warning("row %d: missing '%s', skipping", data_idx, COL_FULLNAME)
                 continue
             if not shortname:
-                logger.warning("row %d: missing '%s', skipping", i, COL_SHORTNAME)
+                logger.warning("row %d: missing '%s', skipping", data_idx, COL_SHORTNAME)
                 continue
 
+            existing_link = row.get(COL_MOODLE_LINK, "").strip()
+            if existing_link:
+                logger.info("row %d: %r already linked (%s), skipping", data_idx, shortname, existing_link)
+                continue
+
+            self._row_map[shortname] = sheet_row
+
             path = row.get(COL_PATH, "").strip()
-            category_id = self._resolve_category(path, category_map, row=i)
+            category_id = self._resolve_category(path, category_map, row=data_idx)
 
             raw_template = row.get(COL_TEMPLATE_ID, "").strip()
             try:
@@ -86,7 +106,7 @@ class SheetsSource(CourseSource):
             except ValueError:
                 logger.warning(
                     "row %d: invalid template_id %r, using default %d",
-                    i, raw_template, self.settings.default_template_id,
+                    data_idx, raw_template, self.settings.default_template_id,
                 )
                 template_id = self.settings.default_template_id
 
@@ -105,6 +125,23 @@ class SheetsSource(CourseSource):
             raise SourceError("Google Sheet produced no valid course rows")
 
         return specs
+
+    def write_moodle_link(self, shortname: str, url: str) -> None:
+        if self._ws is None:
+            logger.warning("write_moodle_link: worksheet not available, skipping write for %r", shortname)
+            return
+        if self._moodle_link_col is None:
+            logger.warning("write_moodle_link: '%s' column not found, skipping write for %r", COL_MOODLE_LINK, shortname)
+            return
+        row = self._row_map.get(shortname)
+        if row is None:
+            logger.warning("write_moodle_link: shortname %r not in row map, skipping", shortname)
+            return
+        try:
+            self._ws.update_cell(row, self._moodle_link_col, url)
+            logger.info("Updated Moodle Link for %r → %s", shortname, url)
+        except Exception as e:
+            logger.warning("write_moodle_link: failed to update %r: %s", shortname, e)
 
     # ------------------------------------------------------------------
 
@@ -131,7 +168,7 @@ class SheetsSource(CourseSource):
 
         return category_map[default]
 
-    def _fetch_rows(self) -> list[dict[str, str]]:
+    def _fetch_rows(self) -> tuple[list[dict[str, str]], list[str]]:
         try:
             if self.credentials_file and Path(self.credentials_file).is_file():
                 gc = gspread.service_account(filename=self.credentials_file)
@@ -161,15 +198,16 @@ class SheetsSource(CourseSource):
             ) from e
 
         try:
-            ws = sh.worksheet(self.worksheet)
+            self._ws = sh.worksheet(self.worksheet)
         except gspread.exceptions.WorksheetNotFound as e:
             raise SourceError(
                 f"Worksheet {self.worksheet!r} not found in {self.spreadsheet_id}"
             ) from e
 
-        all_values = ws.get_all_values()
+        all_values = self._ws.get_all_values()
         if not all_values:
-            return []
+            return [], []
+
         headers = all_values[0]
         rows = []
         for raw_row in all_values[1:]:
@@ -181,25 +219,5 @@ class SheetsSource(CourseSource):
                 if header not in row:
                     row[header] = value
             rows.append(row)
-        return rows
 
-    def _auth_with_adc(self) -> gspread.Client:
-        try:
-            import google.auth
-            from google.auth.transport.requests import Request
-        except ImportError as e:
-            raise SourceError(
-                "google-auth is required for ADC. Run: pip install moodle-loader[sheets]"
-            ) from e
-
-        scopes = ["https://www.googleapis.com/auth/cloud-platform"]
-        try:
-            credentials, _ = google.auth.default(scopes=scopes)
-            credentials.refresh(Request())
-        except Exception as e:
-            raise SourceError(
-                f"Application Default Credentials not found or expired. "
-                f"Run: gcloud auth application-default login\n{e}"
-            ) from e
-
-        return gspread.authorize(credentials)
+        return rows, headers

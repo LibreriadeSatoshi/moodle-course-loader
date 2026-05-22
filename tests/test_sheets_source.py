@@ -23,6 +23,8 @@ VALID_ROW = {
     "template_id": "10",
 }
 
+VALID_ROW_WITH_LINK = {**VALID_ROW, "Moodle Link": ""}
+
 
 @pytest.fixture
 def settings() -> Settings:
@@ -47,7 +49,8 @@ def _make_source(mock_client: MagicMock, settings: Settings, rows: list[dict]) -
         client=mock_client,
         settings=settings,
     )
-    source._fetch_rows = lambda: rows  # type: ignore[method-assign]
+    headers = list(rows[0].keys()) if rows else []
+    source._fetch_rows = lambda: (rows, headers)  # type: ignore[method-assign]
     return source
 
 
@@ -120,3 +123,82 @@ def test_google_auth_error_raises_source_error(mock_client: MagicMock, settings:
     )
     with pytest.raises(SourceError, match="No Google credentials found"):
         source.load()
+
+
+def test_write_moodle_link_updates_correct_cell(mock_client: MagicMock, settings: Settings) -> None:
+    source = _make_source(mock_client, settings, [VALID_ROW_WITH_LINK])
+    source.load()
+    ws_mock = MagicMock()
+    source._ws = ws_mock
+    url = "https://moodle.test/course/view.php?id=25"
+    source.write_moodle_link("G&GI-ES-2026-1", url)
+    # row 2 (header is row 1), col 6 (1-based index of "Moodle Link" in VALID_ROW_WITH_LINK)
+    ws_mock.update_cell.assert_called_once_with(2, 6, url)
+
+
+def test_write_moodle_link_warns_when_shortname_missing(
+    mock_client: MagicMock, settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = _make_source(mock_client, settings, [VALID_ROW_WITH_LINK])
+    source.load()
+    ws_mock = MagicMock()
+    source._ws = ws_mock
+    with caplog.at_level(logging.WARNING):
+        source.write_moodle_link("NONEXISTENT", "https://moodle.test/course/view.php?id=99")
+    assert "NONEXISTENT" in caplog.text
+    ws_mock.update_cell.assert_not_called()
+
+
+def test_write_moodle_link_exception_warns_without_raising(
+    mock_client: MagicMock, settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = _make_source(mock_client, settings, [VALID_ROW_WITH_LINK])
+    source.load()
+    ws_mock = MagicMock()
+    ws_mock.update_cell.side_effect = Exception("write failed")
+    source._ws = ws_mock
+    with caplog.at_level(logging.WARNING):
+        source.write_moodle_link("G&GI-ES-2026-1", "https://moodle.test/course/view.php?id=25")
+    assert "write failed" in caplog.text
+
+
+# --- skip-linked-courses tests ---
+
+LINKED_ROW = {**VALID_ROW, "Moodle Link": "https://moodle.test/course/view.php?id=25"}
+
+
+def test_linked_row_is_excluded_from_specs(mock_client: MagicMock, settings: Settings) -> None:
+    source = _make_source(mock_client, settings, [LINKED_ROW])
+    with pytest.raises(SourceError, match="no valid course rows"):
+        source.load()
+
+
+def test_empty_moodle_link_row_is_included(mock_client: MagicMock, settings: Settings) -> None:
+    row = {**VALID_ROW, "Moodle Link": ""}
+    source = _make_source(mock_client, settings, [row])
+    specs = source.load()
+    assert len(specs) == 1
+    assert specs[0].shortname == "G&GI-ES-2026-1"
+
+
+def test_linked_row_logs_info(
+    mock_client: MagicMock, settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = _make_source(mock_client, settings, [LINKED_ROW, VALID_ROW])
+    with caplog.at_level(logging.INFO):
+        specs = source.load()
+    assert len(specs) == 1
+    assert "G&GI-ES-2026-1" in caplog.text
+    assert "https://moodle.test/course/view.php?id=25" in caplog.text
+
+
+def test_all_rows_linked_raises(mock_client: MagicMock, settings: Settings) -> None:
+    source = _make_source(mock_client, settings, [LINKED_ROW])
+    with pytest.raises(SourceError, match="no valid course rows"):
+        source.load()
+
+
+def test_no_moodle_link_column_includes_all_rows(mock_client: MagicMock, settings: Settings) -> None:
+    source = _make_source(mock_client, settings, [VALID_ROW])
+    specs = source.load()
+    assert len(specs) == 1
