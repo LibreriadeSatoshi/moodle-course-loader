@@ -7,11 +7,12 @@ from rich.console import Console
 from rich.table import Table
 
 from moodle_loader import __version__
+from moodle_loader.builder import PlanBCourseBuilder
 from moodle_loader.client import MoodleClient
 from moodle_loader.config import Settings
 from moodle_loader.exceptions import MoodleError
 from moodle_loader.loader import CourseLoader
-from moodle_loader.sources import YamlSource
+from moodle_loader.sources import PlanBSource, YamlSource
 
 app = typer.Typer(
     name="moodle-loader",
@@ -54,7 +55,9 @@ def _print_results(results: list, *, verbose: bool = False) -> None:
                 r.spec.fullname,
                 str(r.spec.category_id),
                 str(r.spec.template_id),
-                r.spec.summary[:60] + "…" if len(r.spec.summary) > 60 else r.spec.summary,
+                r.spec.summary[:60] + "…"
+                if len(r.spec.summary) > 60
+                else r.spec.summary,
             ]
         row += [
             f"[{status_style[r.status]}]{r.status}[/]",
@@ -66,13 +69,16 @@ def _print_results(results: list, *, verbose: bool = False) -> None:
     console.print(table)
 
 
-def _build_client() -> MoodleClient:
+def _build_settings() -> Settings:
     try:
-        settings = Settings()  # type: ignore[call-arg]
+        return Settings()  # type: ignore[call-arg]
     except Exception as e:
         error_console.print(f"Invalid configuration: {e}")
         raise typer.Exit(code=2)
-    return MoodleClient(settings)
+
+
+def _build_client() -> MoodleClient:
+    return MoodleClient(_build_settings())
 
 
 @app.command()
@@ -98,10 +104,18 @@ def info() -> None:
 
 @app.command()
 def load(
-    yaml_path: Path = typer.Argument(..., exists=False, help="Path to the courses YAML file"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not call the API; validate only"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all course fields in the results table"),
-    shortname: str = typer.Option(None, "--shortname", "-s", help="Load only the course with this shortname"),
+    yaml_path: Path = typer.Argument(
+        ..., exists=False, help="Path to the courses YAML file"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not call the API; validate only"
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show all course fields in the results table"
+    ),
+    shortname: str = typer.Option(
+        None, "--shortname", "-s", help="Load only the course with this shortname"
+    ),
 ) -> None:
     """Load courses defined in a YAML file."""
     source = YamlSource(yaml_path)
@@ -125,18 +139,38 @@ def load(
 @app.command(name="load-sheets")
 def load_sheets(
     spreadsheet_id: str = typer.Argument(..., help="Google Spreadsheet ID"),
-    worksheet: str = typer.Option(None, "--worksheet", "-w", help="Worksheet name (default: SHEETS_WORKSHEET from .env)"),
-    credentials_file: str = typer.Option("credentials.json", "--credentials-file", "-c", help="Path to Google Service Account credentials JSON"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not call the API; validate only"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all course fields in the results table"),
-    shortname: str = typer.Option(None, "--shortname", "-s", help="Load only the course with this shortname"),
-    no_writeback: bool = typer.Option(False, "--no-writeback", help="Skip writing the Moodle URL back to the Sheet"),
+    worksheet: str = typer.Option(
+        None,
+        "--worksheet",
+        "-w",
+        help="Worksheet name (default: SHEETS_WORKSHEET from .env)",
+    ),
+    credentials_file: str = typer.Option(
+        "credentials.json",
+        "--credentials-file",
+        "-c",
+        help="Path to Google Service Account credentials JSON",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not call the API; validate only"
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show all course fields in the results table"
+    ),
+    shortname: str = typer.Option(
+        None, "--shortname", "-s", help="Load only the course with this shortname"
+    ),
+    no_writeback: bool = typer.Option(
+        False, "--no-writeback", help="Skip writing the Moodle URL back to the Sheet"
+    ),
 ) -> None:
     """Load courses from a Google Sheet."""
     try:
         from moodle_loader.sources.sheets_source import SheetsSource
     except ImportError:
-        error_console.print("Google Sheets support not installed. Run: pip install moodle-loader[sheets]")
+        error_console.print(
+            "Google Sheets support not installed. Run: pip install moodle-loader[sheets]"
+        )
         raise typer.Exit(code=2)
 
     settings = Settings()  # type: ignore[call-arg]
@@ -168,6 +202,115 @@ def load_sheets(
     failed = sum(1 for r in results if r.status == "failed")
     if failed:
         raise typer.Exit(code=1)
+
+
+@app.command(name="import-planb")
+def import_planb(
+    course_path: Path = typer.Argument(
+        ..., help="Path to the Plan \u20bf course directory"
+    ),
+    shortname: str = typer.Option(
+        None, "--shortname", help="Override default shortname (directory name)"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Parse and validate without calling Moodle"
+    ),
+    visible: bool = typer.Option(
+        False, "--visible", help="Create course as visible (default: hidden)"
+    ),
+) -> None:
+    """Import a Plan \u20bf course from a local directory into Moodle.
+
+    WARNING: existing course with the same shortname will be deleted before import.
+    """
+    from moodle_loader.exceptions import SourceError
+
+    if not course_path.exists():
+        error_console.print(f"Path does not exist: {course_path}")
+        raise typer.Exit(code=1)
+    if not course_path.is_dir():
+        error_console.print(f"Path is not a directory: {course_path}")
+        raise typer.Exit(code=1)
+
+    try:
+        spec = PlanBSource(course_path).load()
+    except SourceError as e:
+        error_console.print(str(e))
+        raise typer.Exit(code=1)
+
+    if shortname:
+        spec = spec.model_copy(update={"default_shortname": shortname})
+
+    total_chapters = sum(len(p.chapters) for p in spec.parts)
+
+    if dry_run:
+        from rich.panel import Panel
+        from rich.table import Table
+
+        summary_preview = (
+            spec.summary[:80] + "\u2026" if len(spec.summary) > 80 else spec.summary
+        )
+
+        console.print()
+        console.print(
+            Panel(
+                f"[bold]{spec.fullname}[/bold]\n"
+                f"[dim]shortname:[/dim] {spec.default_shortname}\n"
+                f"[dim]summary:[/dim]  {summary_preview}",
+                title="[cyan]Plan \u20bf Course[/cyan]",
+                expand=False,
+            )
+        )
+
+        stats = Table.grid(padding=(0, 2))
+        stats.add_column(style="dim")
+        stats.add_column(style="bold")
+        stats.add_row("Parts", str(len(spec.parts)))
+        stats.add_row("Chapters", str(total_chapters))
+        stats.add_row("Assets", str(len(spec.assets)))
+        console.print(stats)
+        console.print()
+
+        parts_table = Table(title="Parts", show_lines=False)
+        parts_table.add_column("#", style="dim", width=3)
+        parts_table.add_column("Title", style="cyan")
+        parts_table.add_column("Chapters", justify="right")
+        for i, part in enumerate(spec.parts, 1):
+            parts_table.add_row(str(i), part.title, str(len(part.chapters)))
+        console.print(parts_table)
+        console.print()
+        console.print(
+            "[green]\u2713[/green] Dry run complete \u2013 no Moodle calls made."
+        )
+        console.print()
+        return
+
+    settings = _build_settings()
+    client = MoodleClient(settings)
+    builder = PlanBCourseBuilder(
+        client,
+        spec,
+        visible=visible,
+        category_name=settings.default_category_name,
+    )
+    try:
+        result = builder.build()
+    except MoodleError as e:
+        error_console.print(str(e))
+        raise typer.Exit(code=1)
+
+    from rich.table import Table
+
+    table = Table(title=f"Imported: {spec.fullname}", show_lines=False)
+    table.add_column("Field", style="dim")
+    table.add_column("Value", style="cyan")
+    table.add_row("Course ID", str(result.course_id))
+    table.add_row("Shortname", spec.default_shortname)
+    table.add_row("Sections created", str(len(result.sections_created)))
+    table.add_row("Pages created", str(len(result.pages_created)))
+    table.add_row("Assets uploaded", str(result.assets_uploaded))
+    table.add_row("Previous course wiped", "yes" if result.wiped else "no")
+    console.print(table)
 
 
 if __name__ == "__main__":
