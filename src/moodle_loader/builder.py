@@ -11,17 +11,50 @@ from markdown_it import MarkdownIt
 from moodle_loader.client import MoodleClient
 from moodle_loader.models import PlanBBuildResult, PlanBCourseSpec
 
-# Module-level singletons
-_MD = MarkdownIt()
+# Module-level singletons.
+# The CommonMark preset leaves the GFM ``table`` rule disabled, so Plan ₿
+# bodies using pipe-table syntax (e.g. the Bitcoin halving table) would render
+# as a raw ``<p>``. Enable it so those tables become proper ``<table>`` markup.
+_MD = MarkdownIt().enable("table")
 _PLAN_B_TAG_RE = re.compile(r"</?(?:partId|chapterId)[^>]*>")
 _ASSET_IMG_RE = re.compile(r"!\[([^\]]*)\]\((assets/en/[^)]+)\)")
 _INTRO_ASSET_RE = re.compile(r"!\[[^\]]*\]\((assets/en/[^)]+)\)")
 # Matches an opening <img> tag that doesn't already carry a style attribute.
 _IMG_TAG_RE = re.compile(r"<img(?![^>]*\bstyle=)", re.IGNORECASE)
-# Constrains images to the page width so large source files don't overflow.
-_RESPONSIVE_IMG_STYLE = "max-width: 100%; height: auto;"
+# Constrains images to the page width (so large source files don't overflow),
+# forces them onto their own line via ``display: block`` (text resumes below
+# rather than wrapping beside the image), and centers them with ``margin: auto``.
+_RESPONSIVE_IMG_STYLE = (
+    "display: block; margin: 1em auto; max-width: 75%; height: auto;"
+)
+
+# markdown-it emits bare <table>/<th>/<td> tags. Moodle stores the page HTML
+# verbatim and its theme draws no cell borders by default, so tables looked
+# borderless. We inject inline styles (Moodle strips <style> blocks but keeps
+# inline ``style`` attributes) to make the grid visible. Column alignment adds
+# a ``text-align`` style to cells, so we merge rather than overwrite.
+_TABLE_STYLE = "border-collapse: collapse; margin: 1em 0;"
+_CELL_STYLE = "border: 1px solid #ccc; padding: 0.4em 0.6em;"
+_HEADER_CELL_STYLE = _CELL_STYLE + " background-color: #f2f2f2;"
+_STYLE_ATTR_RE = re.compile(r'style="([^"]*)"', re.IGNORECASE)
 
 log = logging.getLogger(__name__)
+
+
+def _inject_style(html: str, tag: str, style: str) -> str:
+    """Add *style* to every opening *tag*, merging into an existing attribute."""
+    open_re = re.compile(rf"<{tag}\b([^>]*)>", re.IGNORECASE)
+
+    def _repl(m: re.Match) -> str:  # type: ignore[type-arg]
+        attrs = m.group(1)
+        existing = _STYLE_ATTR_RE.search(attrs)
+        if existing:
+            merged = f"{existing.group(1).rstrip().rstrip(';')}; {style}"
+            attrs = attrs[: existing.start(1)] + merged + attrs[existing.end(1) :]
+            return f"<{tag}{attrs}>"
+        return f'<{tag} style="{style}"{attrs}>'
+
+    return open_re.sub(_repl, html)
 
 
 def _render_html(body: str, asset_url_map: dict[str, str]) -> str:
@@ -33,6 +66,8 @@ def _render_html(body: str, asset_url_map: dict[str, str]) -> str:
     3. Convert the resulting markdown to HTML via markdown-it-py.
     4. Constrain images to the page width so large source files don't
        overflow the Moodle page layout.
+    5. Add inline borders/padding to tables so they render as a visible grid
+       (Moodle's theme draws none by default).
     """
     content = _PLAN_B_TAG_RE.sub("", body)
 
@@ -44,7 +79,11 @@ def _render_html(body: str, asset_url_map: dict[str, str]) -> str:
 
     content = _ASSET_IMG_RE.sub(_replace_asset, content)
     html = _MD.render(content)
-    return _IMG_TAG_RE.sub(f'<img style="{_RESPONSIVE_IMG_STYLE}"', html)
+    html = _IMG_TAG_RE.sub(f'<img style="{_RESPONSIVE_IMG_STYLE}"', html)
+    html = _inject_style(html, "table", _TABLE_STYLE)
+    html = _inject_style(html, "th", _HEADER_CELL_STYLE)
+    html = _inject_style(html, "td", _CELL_STYLE)
+    return html
 
 
 class PlanBCourseBuilder:

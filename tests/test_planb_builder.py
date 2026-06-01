@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, call
 
@@ -375,4 +376,94 @@ def test_render_html_makes_images_responsive() -> None:
     url_map = {"assets/en/001.webp": "data:image/webp;base64,ZmFrZQ=="}
     html = _render_html(body, url_map)
     assert "<img" in html
-    assert 'style="max-width: 100%; height: auto;"' in html
+    assert (
+        'style="display: block; margin: 1em auto; max-width: 75%; height: auto;"'
+        in html
+    )
+
+
+# ---------------------------------------------------------------------------
+# 17. _render_html converts GFM pipe tables to HTML <table>
+# ---------------------------------------------------------------------------
+
+
+def test_render_html_converts_gfm_table() -> None:
+    # The Bitcoin halving table that prompted this fix.
+    body = (
+        "| Halving | Block height | Block reward |\n"
+        "|---------|--------------|--------------|\n"
+        "| Genesis | 0            | 50 BTC       |\n"
+        "| 1st     | 210000       | 25 BTC       |\n"
+        "| 2nd     | 420000       | 12.5 BTC     |\n"
+    )
+    html = _render_html(body, {})
+
+    # Rendered as a real table, not raw markdown.
+    assert "<table" in html
+    assert "<thead>" in html
+    assert "<tbody>" in html
+    # Cells now carry an inline border style, so match on content not bare tags.
+    assert ">Halving</th>" in html
+    assert ">210000</td>" in html
+    # The raw pipe syntax must not survive inside a paragraph.
+    assert "<p>| Halving" not in html
+
+
+def test_render_html_table_among_prose() -> None:
+    body = (
+        "Intro paragraph.\n\n"
+        "| A | B |\n"
+        "|---|---|\n"
+        "| 1 | 2 |\n\n"
+        "Closing paragraph."
+    )
+    html = _render_html(body, {})
+    assert "<table" in html
+    assert ">1</td>" in html
+    assert ">2</td>" in html
+    # Surrounding prose still renders as paragraphs.
+    assert "<p>Intro paragraph.</p>" in html
+    assert "<p>Closing paragraph.</p>" in html
+
+
+# ---------------------------------------------------------------------------
+# 18. Enabling the table rule leaves non-table content untouched
+# ---------------------------------------------------------------------------
+
+
+def test_render_html_no_table_is_unaffected() -> None:
+    body = "**bold** and _italic_\n\n- one\n- two"
+    html = _render_html(body, {})
+    assert "<table" not in html
+    assert "<strong>bold</strong>" in html
+    assert "<em>italic</em>" in html
+    assert "<li>one</li>" in html
+
+
+# ---------------------------------------------------------------------------
+# 19. Tables get inline borders (Moodle's theme draws none by default)
+# ---------------------------------------------------------------------------
+
+
+def test_render_html_table_has_inline_borders() -> None:
+    body = "| A | B |\n|---|---|\n| 1 | 2 |\n"
+    html = _render_html(body, {})
+    # Table collapses its borders...
+    assert re.search(r'<table style="[^"]*border-collapse:\s*collapse', html)
+    # ...and every cell carries a visible border + padding.
+    assert re.search(r'<th style="[^"]*border:\s*1px solid', html)
+    assert re.search(r'<td style="[^"]*border:\s*1px solid', html)
+    assert "padding" in html
+
+
+def test_render_html_table_preserves_column_alignment() -> None:
+    # ':--:' / '--:' alignment makes markdown-it emit text-align on cells;
+    # our border style must merge with it, not clobber it.
+    body = "| L | R |\n|:--|--:|\n| a | b |\n"
+    html = _render_html(body, {})
+    assert "text-align:right" in html
+    # The right-aligned cell keeps both its alignment and the injected border.
+    cell = re.search(r"<td style=\"([^\"]*)\">b</td>", html)
+    assert cell is not None
+    assert "text-align:right" in cell.group(1)
+    assert "border: 1px solid" in cell.group(1)

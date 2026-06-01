@@ -37,6 +37,7 @@
 - [ ] 5.3 Implementar `_create_course(spec, category_id)` que llama a `create_course`
 - [ ] 5.4 Implementar `_upload_assets(course_id, assets)` y devolver mapa `{ruta → url}`
 - [ ] 5.5 Implementar `_render_chapter_html(chapter, asset_url_map)`: limpia tags Plan ₿, convierte markdown a HTML, reescribe URLs
+- [x] 5.5b Habilitar la regla `table` en el renderizador markdown-it para que las tablas GFM (sintaxis de pipes) se conviertan a HTML `<table>`
 - [ ] 5.6 Implementar `_create_sections(course_id, parts)`
 - [ ] 5.7 Implementar `_create_pages(course_id, parts, asset_url_map)`
 - [ ] 5.8 Implementar `_set_image(course_id, asset_url_map)` (primer asset de la intro, si existe)
@@ -55,6 +56,7 @@
 - [ ] 7.2 Test parser: `btc101` real → cuenta esperada de partes (6) y capítulos (≥20)
 - [ ] 7.3 Test parser: UUIDs faltantes se sintetizan deterministamente
 - [ ] 7.4 Test parser: assets se deduplican entre capítulos
+- [x] 7.4b Test `_render_html`: tabla GFM en pipes → `<table>`/`<thead>`/`<tbody>`/`<td>`, sin pipes crudos en `<p>`
 - [ ] 7.5 Test builder con `MoodleClient` mockeado: secuencia correcta de llamadas
 - [ ] 7.6 Test builder: wipe llama a `delete_course` solo si existe el shortname
 - [ ] 7.7 Test builder: imagen de curso se omite si no hay assets en la intro

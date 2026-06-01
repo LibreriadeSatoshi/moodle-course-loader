@@ -87,6 +87,29 @@ Opciones:
 - **WHEN** el body contiene `<partId>...</partId>` o `<chapterId>...</chapterId>`
 - **THEN** esas tags se eliminan antes de convertir a HTML y no aparecen en el contenido subido
 
+### Requirement: Renderizado de tablas Markdown (GFM)
+`PlanBCourseBuilder` SHALL convertir las tablas escritas en sintaxis de pipes (GFM) a HTML `<table>` al renderizar el body de un capítulo, en lugar de dejarlas como texto plano. El renderizador de Markdown SHALL tener habilitada la regla `table`, que markdown-it-py deja deshabilitada en el preset CommonMark por defecto.
+
+Dado que Moodle almacena el HTML de la página tal cual y su tema no dibuja bordes de celda por defecto, `PlanBCourseBuilder` SHALL añadir estilos inline (atributos `style`) a la tabla y a sus celdas para que la rejilla sea visible. Cuando una celda ya tiene un `style` (p. ej. `text-align` por alineación de columna), el borde SHALL fusionarse con el estilo existente sin sobrescribirlo.
+
+#### Scenario: Tabla en sintaxis de pipes
+- **WHEN** el body de un capítulo contiene una tabla GFM (fila de cabecera, fila separadora `|---|---|` y filas de datos)
+- **THEN** el HTML resultante contiene un elemento `<table>` con `<thead>`, `<tbody>` y celdas `<th>`/`<td>` con el contenido de cada columna
+- **THEN** el HTML no deja la sintaxis de pipes cruda (`| ... |`) dentro de un párrafo `<p>`
+
+#### Scenario: Bordes visibles en la tabla
+- **WHEN** se renderiza una tabla GFM
+- **THEN** el `<table>` lleva un `style` inline con `border-collapse: collapse`
+- **THEN** cada celda `<th>`/`<td>` lleva un `style` inline con `border: 1px solid` y `padding`
+
+#### Scenario: Alineación de columna preservada
+- **WHEN** una columna usa alineación GFM (`:---:`, `---:`) y markdown-it emite `style="text-align:..."` en la celda
+- **THEN** el estilo de borde se fusiona con el `text-align` existente y ambos se conservan en el mismo atributo `style`
+
+#### Scenario: Contenido sin tablas no se ve afectado
+- **WHEN** el body no contiene ninguna tabla
+- **THEN** el HTML se renderiza igual que antes (la regla `table` no altera párrafos, listas, énfasis ni imágenes)
+
 ### Requirement: Fijar imagen del curso
 `PlanBCourseBuilder` SHOULD fijar la imagen del curso usando el primer asset referenciado en la introducción, si existe.
 
