@@ -62,6 +62,7 @@ class PlanBCourseSpec(BaseModel):
     fullname: str
     summary: str = ""
     default_shortname: str
+    planb_id: str | None = None  # course.yml `id:` (Plan ₿ course UUID), if present
     intro: str = ""
     parts: list[PlanBPart] = []
     assets: list[PlanBAsset] = []

@@ -287,11 +287,17 @@ def import_planb(
 
     settings = _build_settings()
     client = MoodleClient(settings)
+    # Registry of sibling courses so cross-course planb.academy links can be
+    # rewritten to internal Moodle URLs.
+    from moodle_loader.sources.planb_source import build_course_uuid_map
+
+    course_uuid_map = build_course_uuid_map(course_path.resolve().parent)
     builder = PlanBCourseBuilder(
         client,
         spec,
         visible=visible,
         category_name=settings.default_category_name,
+        course_uuid_map=course_uuid_map,
     )
     try:
         result = builder.build()

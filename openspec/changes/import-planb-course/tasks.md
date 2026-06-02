@@ -38,6 +38,11 @@
 - [ ] 5.4 Implementar `_upload_assets(course_id, assets)` y devolver mapa `{ruta → url}`
 - [ ] 5.5 Implementar `_render_chapter_html(chapter, asset_url_map)`: limpia tags Plan ₿, convierte markdown a HTML, reescribe URLs
 - [x] 5.5b Habilitar la regla `table` en el renderizador markdown-it para que las tablas GFM (sintaxis de pipes) se conviertan a HTML `<table>`
+- [x] 5.5c Parser: leer `id:` de `course.yml` en `PlanBCourseSpec.planb_id`
+- [x] 5.5d `build_course_uuid_map(courses_root)`: mapa `{planb_uuid → shortname}` desde todos los `course.yml` hermanos
+- [x] 5.5e Reescribir enlaces a cursos planb.academy → `course/view.php?id=<n>` (auto-enlace vía id propio, otros vía `get_course_by_shortname`, no resueltos → eliminados + warning)
+- [x] 5.5f Eliminar el resto de enlaces planb.academy (tutorials/glossary/desconocidos): conservar `texto` de `[texto](url)`, eliminar URLs desnudas
+- [x] 5.5g `MoodleClient.base_url` para construir URLs internas
 - [ ] 5.6 Implementar `_create_sections(course_id, parts)`
 - [ ] 5.7 Implementar `_create_pages(course_id, parts, asset_url_map)`
 - [ ] 5.8 Implementar `_set_image(course_id, asset_url_map)` (primer asset de la intro, si existe)

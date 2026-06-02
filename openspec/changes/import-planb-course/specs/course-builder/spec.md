@@ -87,6 +87,39 @@ Opciones:
 - **WHEN** el body contiene `<partId>...</partId>` o `<chapterId>...</chapterId>`
 - **THEN** esas tags se eliminan antes de convertir a HTML y no aparecen en el contenido subido
 
+### Requirement: Reescritura de enlaces a planb.academy
+El contenido Plan ₿ contiene enlaces a `https://planb.academy/...` (la plataforma de origen). `PlanBCourseBuilder` SHALL reescribir, en el body de cada capítulo, los enlaces a cursos que se están migrando convirtiéndolos en enlaces internos de Moodle, y SHALL eliminar el resto de enlaces a planb.academy dejando solo su texto.
+
+Un enlace a curso tiene la forma `https://planb.academy/[<lang>/]courses/<uuid>[/<chapterUuid>]`, donde `<uuid>` corresponde al campo `id:` de un `course.yml`. La aplicación SHALL construir un mapa `{uuid → shortname}` a partir de todos los `course.yml` del directorio raíz de cursos (los hermanos del curso importado), de modo que los enlaces cruzados entre cursos se puedan resolver.
+
+Para cada enlace a curso con `<uuid>` conocido, `PlanBCourseBuilder` SHALL resolver el `course_id` numérico de Moodle (el del propio curso para auto-enlaces, o vía `get_course_by_shortname(shortname)` para los demás) y reescribir el enlace como `<MOODLE_URL>/course/view.php?id=<course_id>`. La parte `/<chapterUuid>` (enlace profundo a capítulo) SHALL descartarse, apuntando al curso.
+
+Cuando el curso destino aún no existe en Moodle (no se ha importado todavía), su enlace NO se puede resolver a un id numérico; en ese caso el enlace SHALL tratarse como no migrable (eliminado, dejando el texto) y SHALL registrarse un warning. Resolver enlaces cruzados/cíclicos por completo requiere una segunda pasada de importación una vez que todos los cursos existen.
+
+#### Scenario: Enlace a curso migrable existente
+- **WHEN** un body contiene `https://planb.academy/courses/<uuid>` y `<uuid>` corresponde a un curso ya presente en Moodle
+- **THEN** el enlace se reescribe a `<MOODLE_URL>/course/view.php?id=<course_id>` y no aparece ninguna URL `planb.academy` en el HTML
+
+#### Scenario: Auto-enlace al propio curso
+- **WHEN** el body referencia el `<uuid>` del propio curso que se está importando
+- **THEN** el enlace se reescribe usando el `course_id` recién creado del curso actual
+
+#### Scenario: Enlace profundo a capítulo
+- **WHEN** el body contiene `https://planb.academy/courses/<uuid>/<chapterUuid>` con `<uuid>` conocido
+- **THEN** el enlace se reescribe al curso (`course/view.php?id=<course_id>`), descartando `<chapterUuid>`
+
+#### Scenario: Enlace a curso con uuid desconocido
+- **WHEN** el body contiene un enlace a curso cuyo `<uuid>` no corresponde a ningún `course.yml`
+- **THEN** el enlace se elimina; si tenía forma `[texto](url)` se conserva `texto`, si era una URL desnuda se elimina por completo
+
+#### Scenario: Enlace a curso migrable aún no importado
+- **WHEN** el body enlaza a un curso conocido cuyo destino todavía no existe en Moodle
+- **THEN** el enlace se trata como no migrable (eliminado) y se registra un warning
+
+#### Scenario: Enlaces que no son a cursos (tutorials, glossary, etc.)
+- **WHEN** el body contiene `https://planb.academy/tutorials/...` o `https://planb.academy/resources/glossary/...`
+- **THEN** se eliminan; la forma `[texto](url)` conserva `texto` y la URL desnuda se elimina
+
 ### Requirement: Renderizado de tablas Markdown (GFM)
 `PlanBCourseBuilder` SHALL convertir las tablas escritas en sintaxis de pipes (GFM) a HTML `<table>` al renderizar el body de un capítulo, en lugar de dejarlas como texto plano. El renderizador de Markdown SHALL tener habilitada la regla `table`, que markdown-it-py deja deshabilitada en el preset CommonMark por defecto.
 

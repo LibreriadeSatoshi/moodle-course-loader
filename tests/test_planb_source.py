@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from moodle_loader.exceptions import SourceError
-from moodle_loader.sources.planb_source import PlanBSource, _make_uuid, _slugify
+from moodle_loader.sources.planb_source import (
+    PlanBSource,
+    _make_uuid,
+    _slugify,
+    build_course_uuid_map,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -614,3 +619,48 @@ def test_btc101_all_chapter_ids_are_valid_uuids() -> None:
 def test_btc101_idempotent() -> None:
     src = PlanBSource(_BTC101)
     assert src.load() == src.load()
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Reescritura de enlaces a planb.academy — id del curso y registro
+# ---------------------------------------------------------------------------
+
+
+def test_reads_planb_id_from_course_yml(tmp_path: Path) -> None:
+    course_dir = _make_course(
+        tmp_path, course_yml="id: a51c7ceb-e079-4ac3-bf69-6700b985a082\ntopic: bitcoin\n"
+    )
+    spec = PlanBSource(course_dir).load()
+    assert spec.planb_id == "a51c7ceb-e079-4ac3-bf69-6700b985a082"
+
+
+def test_planb_id_none_when_absent(tmp_path: Path) -> None:
+    course_dir = _make_course(tmp_path, course_yml="topic: bitcoin\n")
+    spec = PlanBSource(course_dir).load()
+    assert spec.planb_id is None
+
+
+def test_build_course_uuid_map(tmp_path: Path) -> None:
+    _make_course(
+        tmp_path, slug="btc101", course_yml="id: 11111111-1111-1111-1111-111111111111\n"
+    )
+    _make_course(
+        tmp_path, slug="his201", course_yml="id: 22222222-2222-2222-2222-222222222222\n"
+    )
+    # A directory without a course.yml is ignored.
+    (tmp_path / "not_a_course").mkdir()
+
+    mapping = build_course_uuid_map(tmp_path)
+    assert mapping == {
+        "11111111-1111-1111-1111-111111111111": "btc101",
+        "22222222-2222-2222-2222-222222222222": "his201",
+    }
+
+
+def test_build_course_uuid_map_skips_idless_courses(tmp_path: Path) -> None:
+    _make_course(tmp_path, slug="btc101", course_yml="topic: bitcoin\n")
+    _make_course(
+        tmp_path, slug="his201", course_yml="id: 22222222-2222-2222-2222-222222222222\n"
+    )
+    mapping = build_course_uuid_map(tmp_path)
+    assert mapping == {"22222222-2222-2222-2222-222222222222": "his201"}

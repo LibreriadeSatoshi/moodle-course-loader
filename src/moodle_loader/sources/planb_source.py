@@ -59,6 +59,10 @@ _ASSET_RE = re.compile(r"!\[[^\]]*\]\((assets/en/[^)]+)\)")
 _PART_ID_RE = re.compile(r"<partId>([^<]+)</partId>")
 _CHAPTER_ID_RE = re.compile(r"<chapterId>([^<]+)</chapterId>")
 
+# Top-level ``id:`` line in course.yml (the Plan ₿ course UUID). Anchored at
+# the start of a line so indented keys aren't matched; stops before a comment.
+_COURSE_ID_RE = re.compile(r"^id:\s*([^\s#]+)", re.MULTILINE)
+
 # h1 heading at start of line (exactly one #, not ##)
 _H1_RE = re.compile(r"^# (?!#)(.+)$", re.MULTILINE)
 # h2 heading at start of line (exactly two ##, not ###)
@@ -83,6 +87,28 @@ def _slugify(text: str) -> str:
 def _make_uuid(title: str) -> str:
     """Return a deterministic UUIDv5 string derived from the title slug."""
     return str(uuid.uuid5(_UUID_NS, _slugify(title)))
+
+
+def _read_course_id(course_yml: Path) -> str | None:
+    """Return the ``id:`` (Plan ₿ course UUID) from a course.yml, or None."""
+    m = _COURSE_ID_RE.search(course_yml.read_text(encoding="utf-8"))
+    return m.group(1) if m else None
+
+
+def build_course_uuid_map(courses_root: Path) -> dict[str, str]:
+    """Map ``{planb_course_uuid → shortname}`` for every course under *courses_root*.
+
+    Scans each ``<dir>/course.yml`` for its ``id:`` field, using the directory
+    name as the Moodle shortname. Courses without an ``id:`` are skipped. This
+    registry lets cross-course links (which reference courses by UUID) resolve
+    to the right shortname even though the importer runs one course at a time.
+    """
+    mapping: dict[str, str] = {}
+    for course_yml in sorted(courses_root.glob("*/course.yml")):
+        course_id = _read_course_id(course_yml)
+        if course_id:
+            mapping[course_id] = course_yml.parent.name
+    return mapping
 
 
 def _build_summary(goal: str, objectives: list) -> str:
@@ -244,6 +270,7 @@ class PlanBSource:
             fullname=str(name),
             summary=summary,
             default_shortname=course_dir.name,
+            planb_id=_read_course_id(course_yml),
             intro=intro,
             parts=parts,
             assets=assets,

@@ -47,6 +47,11 @@ class MoodleClient:
             self._session.mount("http://", adapter)
             self._session.mount("https://", adapter)
 
+    @property
+    def base_url(self) -> str:
+        """Moodle site base URL with no trailing slash (e.g. for building links)."""
+        return self._settings.moodle_url.rstrip("/")
+
     def call(self, function: str, **params: Any) -> Any:
         payload = {
             "wstoken": self._settings.moodle_token,

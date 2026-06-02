@@ -467,3 +467,77 @@ def test_render_html_table_preserves_column_alignment() -> None:
     assert cell is not None
     assert "text-align:right" in cell.group(1)
     assert "border: 1px solid" in cell.group(1)
+
+
+# ---------------------------------------------------------------------------
+# 20. planb.academy link rewriting
+# ---------------------------------------------------------------------------
+
+_KNOWN_UUID = "a51c7ceb-e079-4ac3-bf69-6700b985a082"
+_LINK_MAP = {_KNOWN_UUID: "https://moodle.example.com/course/view.php?id=42"}
+
+
+def test_render_html_rewrites_known_course_link() -> None:
+    body = f"See our HIS 201 course:\n\nhttps://planb.academy/courses/{_KNOWN_UUID}"
+    html = _render_html(body, {}, _LINK_MAP)
+    assert "https://moodle.example.com/course/view.php?id=42" in html
+    assert "planb.academy" not in html
+
+
+def test_render_html_known_course_link_with_lang_prefix() -> None:
+    body = f"https://planb.academy/en/courses/{_KNOWN_UUID}"
+    html = _render_html(body, {}, _LINK_MAP)
+    assert "course/view.php?id=42" in html
+    assert "planb.academy" not in html
+
+
+def test_render_html_drops_chapter_in_deep_link() -> None:
+    chapter = "dbb8264a-7434-57e4-9d1b-fbd1bae37fdf"
+    body = f"[miner chapter](https://planb.academy/courses/{_KNOWN_UUID}/{chapter})"
+    html = _render_html(body, {}, _LINK_MAP)
+    # Points at the course; the chapter uuid is gone.
+    assert 'href="https://moodle.example.com/course/view.php?id=42"' in html
+    assert ">miner chapter</a>" in html
+    assert chapter not in html
+
+
+def test_render_html_markdown_link_to_unknown_course_keeps_text() -> None:
+    unknown = "c762773a-9017-4129-bc0e-06adf86050ef"
+    body = f"see [that course](https://planb.academy/courses/{unknown}) now"
+    html = _render_html(body, {}, _LINK_MAP)
+    assert "that course" in html
+    assert "planb.academy" not in html
+    assert "<a " not in html  # link removed, only text kept
+
+
+def test_render_html_strips_bare_unknown_course_link() -> None:
+    unknown = "c762773a-9017-4129-bc0e-06adf86050ef"
+    body = f"Intro.\n\nhttps://planb.academy/courses/{unknown}\n\nOutro."
+    html = _render_html(body, {}, _LINK_MAP)
+    assert "planb.academy" not in html
+    assert "Intro." in html
+    assert "Outro." in html
+
+
+def test_render_html_strips_tutorial_and_glossary_links() -> None:
+    body = (
+        "A [wallet tutorial](https://planb.academy/tutorials/wallet) and a "
+        "bare one https://planb.academy/resources/glossary/utxo here."
+    )
+    html = _render_html(body, {}, _LINK_MAP)
+    assert "planb.academy" not in html
+    assert "wallet tutorial" in html  # markdown link text preserved
+
+
+def test_render_html_leaves_non_planb_links_untouched() -> None:
+    body = "[Bitcoin paper](https://bitcoin.org/bitcoin.pdf)"
+    html = _render_html(body, {}, _LINK_MAP)
+    assert 'href="https://bitcoin.org/bitcoin.pdf"' in html
+    assert ">Bitcoin paper</a>" in html
+
+
+def test_render_html_link_map_optional() -> None:
+    # No link map: planb links are still stripped (nothing resolves).
+    body = f"https://planb.academy/courses/{_KNOWN_UUID}"
+    html = _render_html(body, {})
+    assert "planb.academy" not in html
