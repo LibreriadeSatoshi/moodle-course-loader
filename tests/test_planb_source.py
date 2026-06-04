@@ -664,3 +664,123 @@ def test_build_course_uuid_map_skips_idless_courses(tmp_path: Path) -> None:
     )
     mapping = build_course_uuid_map(tmp_path)
     assert mapping == {"22222222-2222-2222-2222-222222222222": "his201"}
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Parsear el bloque `videos:` de `course.yml`
+# ---------------------------------------------------------------------------
+
+# A course.yml with one YouTube-only, one PeerTube-only, and one dual-provider
+# video — mirrors the real btc101/btc102 shapes.
+_VIDEOS_YML = """\
+id: 00000000-0000-0000-0000-000000000000
+videos:
+  - id: 758d7d3b-84e6-4f52-bf43-967a2ce7e7ec
+    youtube:
+      - fr: PdiL6_1wbQY
+  - id: 58e578ef-bb3c-423d-8431-0c16db8e5f29
+    peertube:
+      - es: aee8BTojUSaDFnEPnoUUzC
+      - it: 2Gq2JdsnSJJLc5BtPGe1kJ
+  - id: 9f3a7b2e-2c4d-4c1e-8b1f-3a2c1d4e5f6a
+    youtube:
+      - en: dQw4w9WgXcQ
+    peertube:
+      - en: uNFrQeXvnwtqnjbMHT7oXM
+"""
+
+
+def test_parses_youtube_only_video(tmp_path: Path) -> None:
+    course_dir = _make_course(tmp_path, course_yml=_VIDEOS_YML)
+    spec = PlanBSource(course_dir).load()
+
+    video = spec.videos["758d7d3b-84e6-4f52-bf43-967a2ce7e7ec"]
+    assert video.youtube == {"fr": "PdiL6_1wbQY"}
+    assert video.peertube == {}
+
+
+def test_parses_peertube_only_video(tmp_path: Path) -> None:
+    course_dir = _make_course(tmp_path, course_yml=_VIDEOS_YML)
+    spec = PlanBSource(course_dir).load()
+
+    video = spec.videos["58e578ef-bb3c-423d-8431-0c16db8e5f29"]
+    assert video.peertube == {
+        "es": "aee8BTojUSaDFnEPnoUUzC",
+        "it": "2Gq2JdsnSJJLc5BtPGe1kJ",
+    }
+    assert video.youtube == {}
+
+
+def test_parses_dual_provider_video(tmp_path: Path) -> None:
+    course_dir = _make_course(tmp_path, course_yml=_VIDEOS_YML)
+    spec = PlanBSource(course_dir).load()
+
+    video = spec.videos["9f3a7b2e-2c4d-4c1e-8b1f-3a2c1d4e5f6a"]
+    assert video.youtube == {"en": "dQw4w9WgXcQ"}
+    assert video.peertube == {"en": "uNFrQeXvnwtqnjbMHT7oXM"}
+
+
+def test_videos_empty_when_block_absent(tmp_path: Path) -> None:
+    # The default course.yml has an `id:` but no `videos:` block.
+    course_dir = _make_course(tmp_path)
+    spec = PlanBSource(course_dir).load()
+    assert spec.videos == {}
+
+
+def test_video_entry_without_id_is_skipped(tmp_path: Path) -> None:
+    course_yml = (
+        "id: 00000000-0000-0000-0000-000000000000\n"
+        "videos:\n"
+        "  - youtube:\n"
+        "      - en: noIdHere\n"
+        "  - id: 11111111-1111-1111-1111-111111111111\n"
+        "    youtube:\n"
+        "      - en: keepsThis\n"
+    )
+    course_dir = _make_course(tmp_path, course_yml=course_yml)
+    spec = PlanBSource(course_dir).load()
+
+    # Only the entry with an id survives.
+    assert list(spec.videos) == ["11111111-1111-1111-1111-111111111111"]
+
+
+def test_video_entry_without_providers_is_skipped(tmp_path: Path) -> None:
+    course_yml = (
+        "id: 00000000-0000-0000-0000-000000000000\n"
+        "videos:\n"
+        "  - id: 22222222-2222-2222-2222-222222222222\n"  # no youtube/peertube
+        "  - id: 33333333-3333-3333-3333-333333333333\n"
+        "    peertube:\n"
+        "      - en: hasTrack\n"
+    )
+    course_dir = _make_course(tmp_path, course_yml=course_yml)
+    spec = PlanBSource(course_dir).load()
+
+    assert list(spec.videos) == ["33333333-3333-3333-3333-333333333333"]
+
+
+def test_videos_do_not_disturb_parts_and_assets(tmp_path: Path) -> None:
+    # Same content with and without a videos block → identical parts/chapters.
+    plain = PlanBSource(_make_course(tmp_path, slug="plain")).load()
+    with_videos = PlanBSource(
+        _make_course(tmp_path, slug="withvideos", course_yml=_VIDEOS_YML)
+    ).load()
+
+    assert [p.title for p in plain.parts] == [p.title for p in with_videos.parts]
+    assert [(c.title, c.body) for p in plain.parts for c in p.chapters] == [
+        (c.title, c.body) for p in with_videos.parts for c in p.chapters
+    ]
+    assert plain.videos == {}
+    assert with_videos.videos != {}
+
+
+def test_btc102_real_videos_block_parsed() -> None:
+    """The real btc102 course.yml carries a videos block we should parse."""
+    btc102 = _BTC101.parent / "btc102"
+    if not (btc102 / "course.yml").is_file():
+        pytest.skip("btc102 content not available")
+
+    spec = PlanBSource(btc102).load()
+    # The directive id referenced from btc102/en.md resolves in the map.
+    assert "58e578ef-bb3c-423d-8431-0c16db8e5f29" in spec.videos
+    assert spec.videos["58e578ef-bb3c-423d-8431-0c16db8e5f29"].peertube

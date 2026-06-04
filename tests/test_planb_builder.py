@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from unittest.mock import MagicMock, call
@@ -14,6 +15,7 @@ from moodle_loader.models import (
     PlanBChapter,
     PlanBCourseSpec,
     PlanBPart,
+    PlanBVideo,
 )
 
 # ---------------------------------------------------------------------------
@@ -541,3 +543,181 @@ def test_render_html_link_map_optional() -> None:
     body = f"https://planb.academy/courses/{_KNOWN_UUID}"
     html = _render_html(body, {})
     assert "planb.academy" not in html
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Embeber vídeos Plan ₿ en la página del Capítulo
+# ---------------------------------------------------------------------------
+#
+# Embeds are tested through _render_html (the public render seam), matching how
+# tables and links are tested above. The video map is passed via the `videos`
+# keyword. Helper below builds PlanBVideo entries keyed by uuid.
+
+_VID_UUID = "58e578ef-bb3c-423d-8431-0c16db8e5f29"
+
+
+def _vid(
+    uuid: str = _VID_UUID,
+    *,
+    youtube: dict[str, str] | None = None,
+    peertube: dict[str, str] | None = None,
+) -> PlanBVideo:
+    return PlanBVideo(
+        video_id=uuid, youtube=youtube or {}, peertube=peertube or {}
+    )
+
+
+def test_directive_resolves_to_youtube() -> None:
+    body = f":::video id={_VID_UUID}:::"
+    videos = {_VID_UUID: _vid(youtube={"en": "PdiL6_1wbQY"})}
+    html = _render_html(body, {}, videos=videos)
+
+    assert "<iframe" in html
+    assert 'src="https://www.youtube.com/embed/PdiL6_1wbQY"' in html
+    assert ":::video" not in html
+
+
+def test_directive_resolves_to_peertube() -> None:
+    body = f":::video id={_VID_UUID}:::"
+    videos = {_VID_UUID: _vid(peertube={"en": "aee8BTojUSaDFnEPnoUUzC"})}
+    html = _render_html(body, {}, videos=videos)
+
+    assert "<iframe" in html
+    assert (
+        'src="https://peertube.planb.network/videos/embed/aee8BTojUSaDFnEPnoUUzC"'
+        in html
+    )
+    assert ":::video" not in html
+
+
+def test_directive_prefers_youtube_over_peertube() -> None:
+    body = f":::video id={_VID_UUID}:::"
+    videos = {_VID_UUID: _vid(youtube={"en": "ytEN"}, peertube={"en": "ptEN"})}
+    html = _render_html(body, {}, videos=videos)
+
+    assert "https://www.youtube.com/embed/ytEN" in html
+    assert "ptEN" not in html  # peertube track not used
+
+
+def test_directive_language_match_beats_provider_preference() -> None:
+    # YouTube has only a non-en track; PeerTube has the en track. The en match
+    # wins even though YouTube is the preferred provider.
+    body = f":::video id={_VID_UUID}:::"
+    videos = {_VID_UUID: _vid(youtube={"fr": "frTrack"}, peertube={"en": "enTrack"})}
+    html = _render_html(body, {}, videos=videos)
+
+    assert "https://peertube.planb.network/videos/embed/enTrack" in html
+    assert "frTrack" not in html
+
+
+def test_directive_falls_back_to_non_english_track_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # btc102's 58e578ef video: PeerTube es/it only, no English track.
+    body = f":::video id={_VID_UUID}:::"
+    videos = {
+        _VID_UUID: _vid(
+            peertube={"es": "aee8BTojUSaDFnEPnoUUzC", "it": "2Gq2JdsnSJJLc5BtPGe1kJ"}
+        )
+    }
+    with caplog.at_level(logging.WARNING):
+        html = _render_html(body, {}, videos=videos)
+
+    # First available track is embedded...
+    assert "<iframe" in html
+    assert "https://peertube.planb.network/videos/embed/aee8BTojUSaDFnEPnoUUzC" in html
+    # ...and a warning flags the missing English version.
+    assert any(_VID_UUID in r.message for r in caplog.records)
+
+
+def test_directive_unknown_uuid_degrades_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    body = f"Before.\n\n:::video id={_VID_UUID}:::\n\nAfter."
+    with caplog.at_level(logging.WARNING):
+        html = _render_html(body, {}, videos={})  # uuid not in map
+
+    # No broken embed, no raw directive text leaks to the page.
+    assert "<iframe" not in html
+    assert ":::video" not in html
+    assert _VID_UUID not in html
+    # Surrounding prose survives.
+    assert "Before." in html
+    assert "After." in html
+    # The dropped video is logged.
+    assert any(_VID_UUID in r.message for r in caplog.records)
+
+
+def test_directive_without_videos_arg_degrades(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # videos defaults to empty: a directive still must not survive as raw text.
+    body = f":::video id={_VID_UUID}:::"
+    with caplog.at_level(logging.WARNING):
+        html = _render_html(body, {})
+
+    assert ":::video" not in html
+    assert "<iframe" not in html
+
+
+def test_youtube_image_youtu_be_becomes_iframe() -> None:
+    # btc101's BTC Map video uses the markdown-image-to-YouTube form.
+    body = "![btc-map-video](https://youtu.be/2-fEEC9_YT8)"
+    html = _render_html(body, {})
+
+    assert "<iframe" in html
+    assert 'src="https://www.youtube.com/embed/2-fEEC9_YT8"' in html
+    # Must never render as a broken <img> pointing at YouTube.
+    assert "<img" not in html
+    assert "youtu.be" not in html
+
+
+def test_youtube_image_watch_url_becomes_iframe() -> None:
+    body = "![music](https://www.youtube.com/watch?v=IO-tUpkygaI)"
+    html = _render_html(body, {})
+
+    assert "<iframe" in html
+    assert 'src="https://www.youtube.com/embed/IO-tUpkygaI"' in html
+    assert "<img" not in html
+
+
+def test_asset_image_is_not_treated_as_video() -> None:
+    body = "![diagram](assets/en/001.webp)"
+    url_map = {"assets/en/001.webp": "data:image/webp;base64,ZmFrZQ=="}
+    html = _render_html(body, url_map)
+
+    assert "<img" in html
+    assert "<iframe" not in html
+
+
+def test_non_youtube_external_image_stays_img() -> None:
+    body = "![chart](https://example.com/chart.png)"
+    html = _render_html(body, {})
+
+    assert "<img" in html
+    assert 'src="https://example.com/chart.png"' in html
+    assert "<iframe" not in html
+
+
+def test_video_embed_is_responsive_16_9() -> None:
+    body = f":::video id={_VID_UUID}:::"
+    videos = {_VID_UUID: _vid(youtube={"en": "abc123"})}
+    html = _render_html(body, {}, videos=videos)
+
+    # 16:9 aspect ratio via padding-bottom on the wrapper.
+    assert "56.25%" in html
+    assert "allowfullscreen" in html
+
+
+def test_video_iframe_survives_markdown_render() -> None:
+    # The iframe HTML must not be escaped by markdown-it (html disabled).
+    body = f"Intro.\n\n:::video id={_VID_UUID}:::\n\nOutro."
+    videos = {_VID_UUID: _vid(youtube={"en": "abc123"})}
+    html = _render_html(body, {}, videos=videos)
+
+    assert "<iframe" in html
+    assert "&lt;iframe" not in html  # not HTML-escaped
+    # The marker is unwrapped from its surrounding <p>.
+    assert "@@PLANB_VIDEO" not in html
+    assert "<p>Intro.</p>" in html
+    assert "<p>Outro.</p>" in html

@@ -37,6 +37,29 @@ moodle-loader load-sheets <spreadsheet_id>
 moodle-loader load-sheets <spreadsheet_id> --worksheet "Hoja 1" --dry-run
 ```
 
+## Plan ₿ videos
+
+When importing a Plan ₿ course, two video syntaxes in the markdown are turned
+into embedded players (a responsive 16:9 `<iframe>`):
+
+- `:::video id=<UUID>:::` — resolved via the `videos:` block of `course.yml`,
+  which maps each UUID to a YouTube and/or PeerTube id per language.
+- `![desc](https://youtu.be/<id>)` or `![desc](https://www.youtube.com/watch?v=<id>)`
+  — the YouTube id is taken straight from the URL.
+
+YouTube is preferred over PeerTube when both exist. The importer is
+English-only, so the `en` track is used; if a video has no `en` track the first
+available track is embedded and a warning is logged. A video that can't be
+resolved (unknown UUID, no tracks) is dropped with a warning — never left as
+raw `:::video ...:::` text or a broken image.
+
+> **Moodle requirement — allow the iframe sources.** Moodle's HTML purifier
+> strips `<iframe>` unless the source domain is allow-listed. In the target
+> Moodle, add `www.youtube.com` and `peertube.planb.network` under
+> *Site administration → Security → HTTP security → Allowed iframe sources*.
+> Without this the players are removed silently and the pages render empty
+> where the videos should be.
+
 ## Google Sheets setup
 
 Two authentication options are supported. Use whichever works in your environment.

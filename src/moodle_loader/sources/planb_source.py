@@ -35,11 +35,13 @@ every h2 heading inside a Part starts a new Chapter.
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from pathlib import Path
 
 import frontmatter
+import yaml
 
 from moodle_loader.exceptions import SourceError
 from moodle_loader.models import (
@@ -47,7 +49,10 @@ from moodle_loader.models import (
     PlanBChapter,
     PlanBCourseSpec,
     PlanBPart,
+    PlanBVideo,
 )
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Compiled patterns
@@ -93,6 +98,61 @@ def _read_course_id(course_yml: Path) -> str | None:
     """Return the ``id:`` (Plan ₿ course UUID) from a course.yml, or None."""
     m = _COURSE_ID_RE.search(course_yml.read_text(encoding="utf-8"))
     return m.group(1) if m else None
+
+
+def _flatten_tracks(raw: object) -> dict[str, str]:
+    """Flatten a provider list ``[{lang: id}, ...]`` into ``{lang: id}``.
+
+    Plan ₿ stores each provider as a YAML list of single-key mappings; this
+    collapses them into one dict. Empty / malformed entries are ignored.
+    """
+    tracks: dict[str, str] = {}
+    if not isinstance(raw, list):
+        return tracks
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        for lang, vid in item.items():
+            if lang and vid is not None:
+                tracks[str(lang)] = str(vid)
+    return tracks
+
+
+def _read_videos(course_yml: Path) -> dict[str, PlanBVideo]:
+    """Parse the ``videos:`` block of a course.yml into ``{UUID → PlanBVideo}``.
+
+    Each entry maps a video UUID to its ``youtube`` / ``peertube`` provider
+    tracks (per language). Entries without an ``id`` or without any provider
+    track are skipped with a warning; a missing/empty block yields ``{}``.
+    """
+    try:
+        data = yaml.safe_load(course_yml.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise SourceError(f"Could not parse {course_yml}: {exc}") from exc
+
+    entries = data.get("videos") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return {}
+
+    videos: dict[str, PlanBVideo] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        vid = entry.get("id")
+        if not vid:
+            log.warning("Skipping video entry without 'id' in %s", course_yml)
+            continue
+        youtube = _flatten_tracks(entry.get("youtube"))
+        peertube = _flatten_tracks(entry.get("peertube"))
+        if not youtube and not peertube:
+            log.warning(
+                "Skipping video %s in %s: no youtube/peertube tracks", vid, course_yml
+            )
+            continue
+        videos[str(vid)] = PlanBVideo(
+            video_id=str(vid), youtube=youtube, peertube=peertube
+        )
+    return videos
 
 
 def build_course_uuid_map(courses_root: Path) -> dict[str, str]:
@@ -274,4 +334,5 @@ class PlanBSource:
             intro=intro,
             parts=parts,
             assets=assets,
+            videos=_read_videos(course_yml),
         )

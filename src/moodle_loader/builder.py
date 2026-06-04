@@ -4,12 +4,13 @@ import base64
 import logging
 import mimetypes
 import re
+from html import escape as _escape
 from pathlib import Path
 
 from markdown_it import MarkdownIt
 
 from moodle_loader.client import MoodleClient
-from moodle_loader.models import PlanBBuildResult, PlanBCourseSpec
+from moodle_loader.models import PlanBBuildResult, PlanBCourseSpec, PlanBVideo
 
 # Module-level singletons.
 # The CommonMark preset leaves the GFM ``table`` rule disabled, so Plan ₿
@@ -50,7 +51,125 @@ _PLANB_ANY_RE = re.compile(r"https?://planb\.academy/\S*")
 # A markdown link [label](planb-url).
 _PLANB_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\((https?://planb\.academy/[^)]+)\)")
 
+# --- Video embeds ----------------------------------------------------------
+# Plan ₿ uses two video syntaxes (course-content-scheme.json):
+#   1. the directive ``:::video id=<UUID>:::`` resolved via course.yml videos
+#   2. a markdown image whose URL is a YouTube link, e.g.
+#      ``![desc](https://youtu.be/<id>)`` — the id is inline.
+# PeerTube videos live on Plan ₿'s own instance.
+_PEERTUBE_HOST = "https://peertube.planb.network"
+
+_VIDEO_DIRECTIVE_RE = re.compile(r":::video\s+id=([0-9a-fA-F-]+)\s*:::")
+# Any markdown image with an absolute URL (we only convert the YouTube ones;
+# asset refs are relative ``assets/en/...`` so they never match here).
+_VIDEO_IMG_RE = re.compile(r"!\[([^\]]*)\]\((https?://[^)]+)\)")
+# YouTube id from watch/embed/live/short URLs (mirrors the LMS fixEmbedUrl).
+_YOUTUBE_URL_RE = re.compile(
+    r"https?://(?:www\.)?(?:youtube\.com/(?:watch\?v=|embed/|live/)|youtu\.be/)"
+    r"([\w-]+)"
+)
+# Placeholder injected pre-render and swapped for the iframe post-render, so the
+# iframe HTML isn't escaped by markdown-it (which has raw HTML disabled).
+_VIDEO_MARKER = "@@PLANB_VIDEO_{}@@"
+# Responsive 16:9 wrapper, width-capped like images, inline-styled (Moodle keeps
+# inline ``style`` but strips ``<style>`` blocks).
+_VIDEO_EMBED = (
+    '<div style="max-width: 75%; margin: 1em auto;">'
+    '<div style="position: relative; padding-bottom: 56.25%; height: 0;">'
+    '<iframe src="{url}" title="{title}" '
+    'style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; '
+    'border: 0;" allow="fullscreen" allowfullscreen></iframe>'
+    "</div></div>"
+)
+
 log = logging.getLogger(__name__)
+
+
+def _youtube_id(url: str) -> str | None:
+    """Extract the YouTube video id from a watch/short/embed/live URL."""
+    m = _YOUTUBE_URL_RE.search(url)
+    return m.group(1) if m else None
+
+
+def _embed_url(provider: str, video_id: str) -> str:
+    """Build the embed URL for a provider id (matches Plan ₿'s fixEmbedUrl)."""
+    if provider == "youtube":
+        return f"https://www.youtube.com/embed/{video_id}"
+    return f"{_PEERTUBE_HOST}/videos/embed/{video_id}"
+
+
+def _resolve_directive(
+    video_uuid: str, videos: dict[str, PlanBVideo]
+) -> tuple[str | None, str | None]:
+    """Resolve a ``:::video`` UUID to an embed URL, plus an optional warning.
+
+    Order (language first, provider as tie-break — the importer is English-only):
+    ``youtube[en]`` → ``peertube[en]`` → first ``youtube`` track → first
+    ``peertube`` track. Returns ``(None, warning)`` when nothing resolves.
+    """
+    video = videos.get(video_uuid)
+    if video is None:
+        return None, f"video {video_uuid} not in course.yml videos map; dropped"
+
+    if "en" in video.youtube:
+        return _embed_url("youtube", video.youtube["en"]), None
+    if "en" in video.peertube:
+        return _embed_url("peertube", video.peertube["en"]), None
+
+    for provider, tracks in (("youtube", video.youtube), ("peertube", video.peertube)):
+        if tracks:
+            lang, vid = next(iter(tracks.items()))
+            return (
+                _embed_url(provider, vid),
+                f"video {video_uuid} has no English track; "
+                f"embedding {lang!r} from {provider}",
+            )
+    return None, f"video {video_uuid} has no provider tracks; dropped"
+
+
+def _video_iframe(url: str, title: str) -> str:
+    """Render the responsive iframe block for an embed URL."""
+    return _VIDEO_EMBED.format(url=_escape(url, quote=True), title=_escape(title))
+
+
+def _extract_videos(
+    content: str, videos: dict[str, PlanBVideo]
+) -> tuple[str, list[str]]:
+    """Replace both video syntaxes with markers; return ``(content, snippets)``.
+
+    Each marker maps to an iframe HTML snippet (or ``""`` for a non-resolvable
+    video, which drops it). Runs before markdown render so the directive never
+    survives as text and a YouTube image never becomes an ``<img>``.
+    """
+    snippets: list[str] = []
+
+    def _directive_repl(m: re.Match) -> str:  # type: ignore[type-arg]
+        url, warning = _resolve_directive(m.group(1), videos)
+        if warning:
+            log.warning(warning)
+        snippets.append(_video_iframe(url, m.group(1)) if url else "")
+        return f"\n\n{_VIDEO_MARKER.format(len(snippets) - 1)}\n\n"
+
+    def _img_repl(m: re.Match) -> str:  # type: ignore[type-arg]
+        alt, url = m.group(1), m.group(2)
+        yid = _youtube_id(url)
+        if not yid:
+            return m.group(0)  # not a YouTube image → leave it for markdown-it
+        snippets.append(_video_iframe(_embed_url("youtube", yid), alt))
+        return f"\n\n{_VIDEO_MARKER.format(len(snippets) - 1)}\n\n"
+
+    content = _VIDEO_DIRECTIVE_RE.sub(_directive_repl, content)
+    content = _VIDEO_IMG_RE.sub(_img_repl, content)
+    return content, snippets
+
+
+def _inject_videos(html: str, snippets: list[str]) -> str:
+    """Swap each marker (and its wrapping ``<p>``, if any) for its iframe."""
+    for idx, snippet in enumerate(snippets):
+        marker = _VIDEO_MARKER.format(idx)
+        html = re.sub(rf"<p>\s*{re.escape(marker)}\s*</p>", snippet, html)
+        html = html.replace(marker, snippet)
+    return html
 
 
 def _rewrite_planb_links(text: str, link_map: dict[str, str]) -> str:
@@ -105,21 +224,26 @@ def _render_html(
     body: str,
     asset_url_map: dict[str, str],
     link_map: dict[str, str] | None = None,
+    videos: dict[str, PlanBVideo] | None = None,
 ) -> str:
     """Render a Plan ₿ markdown body to HTML suitable for a Moodle page.
 
     Steps:
     1. Strip Plan ₿ XML tags (<partId>, <chapterId>, and their closing forms).
-    2. Rewrite ``![alt](assets/en/fname)`` references using *asset_url_map*.
-    3. Rewrite planb.academy links: known course links → internal Moodle URLs
+    2. Replace video syntaxes (``:::video id=...:::`` and YouTube images) with
+       markers, resolving each to an embed URL via *videos* (keyed by UUID).
+    3. Rewrite ``![alt](assets/en/fname)`` references using *asset_url_map*.
+    4. Rewrite planb.academy links: known course links → internal Moodle URLs
        (via *link_map*, keyed by course UUID), other planb links stripped.
-    4. Convert the resulting markdown to HTML via markdown-it-py.
-    5. Constrain images to the page width so large source files don't
+    5. Convert the resulting markdown to HTML via markdown-it-py.
+    6. Swap the video markers for their responsive ``<iframe>`` blocks.
+    7. Constrain images to the page width so large source files don't
        overflow the Moodle page layout.
-    6. Add inline borders/padding to tables so they render as a visible grid
+    8. Add inline borders/padding to tables so they render as a visible grid
        (Moodle's theme draws none by default).
     """
     content = _PLAN_B_TAG_RE.sub("", body)
+    content, video_snippets = _extract_videos(content, videos or {})
 
     def _replace_asset(m: re.Match) -> str:  # type: ignore[type-arg]
         alt = m.group(1)
@@ -130,6 +254,7 @@ def _render_html(
     content = _ASSET_IMG_RE.sub(_replace_asset, content)
     content = _rewrite_planb_links(content, link_map or {})
     html = _MD.render(content)
+    html = _inject_videos(html, video_snippets)
     html = _IMG_TAG_RE.sub(f'<img style="{_RESPONSIVE_IMG_STYLE}"', html)
     html = _inject_style(html, "table", _TABLE_STYLE)
     html = _inject_style(html, "th", _HEADER_CELL_STYLE)
@@ -388,7 +513,9 @@ class PlanBCourseBuilder:
         for i, part in enumerate(self._spec.parts):
             section_number = i + 1
             for chapter in part.chapters:
-                content = _render_html(chapter.body, asset_url_map, link_map)
+                content = _render_html(
+                    chapter.body, asset_url_map, link_map, self._spec.videos
+                )
                 log.debug(
                     "Creating page %r in section %d", chapter.title, section_number
                 )

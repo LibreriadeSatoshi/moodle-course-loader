@@ -56,6 +56,18 @@ class PlanBPart(BaseModel):
     chapters: list[PlanBChapter] = []
 
 
+class PlanBVideo(BaseModel):
+    """A video referenced from course content, mapped from course.yml `videos:`.
+
+    Each provider holds a ``{language → id_from_provider}`` map (flattened from
+    the YAML list of single-key dicts). Either provider may be empty.
+    """
+
+    video_id: str  # UUID used in the `:::video id=...:::` directive
+    youtube: dict[str, str] = {}  # {language: youtube video id}
+    peertube: dict[str, str] = {}  # {language: peertube short id}
+
+
 class PlanBCourseSpec(BaseModel):
     """Parsed representation of a Plan ₿ course directory."""
 
@@ -66,6 +78,7 @@ class PlanBCourseSpec(BaseModel):
     intro: str = ""
     parts: list[PlanBPart] = []
     assets: list[PlanBAsset] = []
+    videos: dict[str, PlanBVideo] = {}  # {video UUID → PlanBVideo}, from course.yml
 
 
 class PlanBBuildResult(BaseModel):
