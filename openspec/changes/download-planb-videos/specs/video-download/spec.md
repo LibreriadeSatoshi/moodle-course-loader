@@ -39,21 +39,36 @@ Opciones:
 - **WHEN** el mismo UUID aparece en más de un `course.yml`
 - **THEN** se descarga una sola vez (deduplicado)
 
+### Requirement: Seleccionar la resolución nativa (máxima) del vídeo
+`download-videos` SHALL descargar la variante de **mayor resolución** disponible. Como el master HLS de PeerTube lista las variantes en orden ascendente (144p → 240p → 360p…), `download-videos` SHALL parsear el master, elegir la variante con mayor área de píxeles (`RESOLUTION=<w>x<h>`), resolver su URI relativa contra la del master, y descargar esa media playlist. La altura elegida SHALL registrarse en el manifiesto (`resolution`, p. ej. `360p`).
+
+#### Scenario: Varias variantes en el master
+- **WHEN** el master ofrece variantes 144p, 240p y 360p
+- **THEN** se descarga la de 360p (no la primera/menor) y `resolution` queda en `360p`
+
+#### Scenario: Master sin variantes
+- **WHEN** el master no contiene líneas `#EXT-X-STREAM-INF` con `RESOLUTION`
+- **THEN** se usa la URL del master tal cual y `resolution` queda sin definir
+
+#### Scenario: URI de variante relativa
+- **WHEN** la variante elegida es una URI relativa (p. ej. `…-360.m3u8`)
+- **THEN** se resuelve contra la URL del master para obtener una URL absoluta
+
 ### Requirement: Descarga y remux a MP4
-Para cada vídeo seleccionado, `download-videos` SHALL resolver el master HLS vía la API de PeerTube (`/api/v1/videos/<peertube_id>`) y remuxarlo a un fichero MP4 con `ffmpeg` sin recodificar.
+Para cada vídeo seleccionado, `download-videos` SHALL resolver la media playlist de mayor resolución (ver requisito anterior) y remuxarla a un fichero MP4 con `ffmpeg` sin recodificar.
 
 #### Scenario: Remux correcto
-- **WHEN** la API devuelve un `playlistUrl` (master `.m3u8`) válido
+- **WHEN** la variante elegida es una media playlist `.m3u8` válida
 - **THEN** se genera `<archive-dir>/<uuid>.<lang>.mp4` mediante `ffmpeg ... -c copy`
-- **THEN** la entrada del manifiesto queda con `status: downloaded`, `mp4`, `sha256` y `bytes`
+- **THEN** la entrada del manifiesto queda con `status: downloaded`, `mp4`, `sha256`, `bytes` y `resolution`
 
 #### Scenario: Fallo de descarga/remux
-- **WHEN** la API no responde, no hay `streamingPlaylists`, o `ffmpeg` devuelve error
+- **WHEN** la API no responde, no hay `streamingPlaylists`, no se puede obtener el master, o `ffmpeg` devuelve error
 - **THEN** la entrada se marca `status: failed` con el motivo logueado
 - **THEN** el lote continúa con el resto y el comando termina con código ≠ 0
 
 ### Requirement: Manifiesto de vídeos indexado por UUID Plan ₿
-`download-videos` SHALL mantener un manifiesto YAML indexado por el UUID Plan ₿ del vídeo (la clave usada en `:::video id=UUID:::`). Por entrada descargada SHALL registrar al menos: `peertube_id`, `lang`, `title`, `mp4` (ruta relativa al manifiesto), `sha256`, `bytes`, `status` y `source_url`.
+`download-videos` SHALL mantener un manifiesto YAML indexado por el UUID Plan ₿ del vídeo (la clave usada en `:::video id=UUID:::`). Por entrada descargada SHALL registrar al menos: `peertube_id`, `lang`, `title`, `resolution`, `mp4` (ruta relativa al manifiesto), `sha256`, `bytes`, `status` y `source_url`.
 
 El manifiesto SHALL guardarse de forma atómica (fichero temporal + rename) para no corromperse ante interrupciones.
 
@@ -64,6 +79,40 @@ El manifiesto SHALL guardarse de forma atómica (fichero temporal + rename) para
 #### Scenario: Actualización incremental
 - **WHEN** el manifiesto ya tiene entradas de una ejecución anterior
 - **THEN** una nueva ejecución añade/actualiza entradas sin perder las existentes
+
+### Requirement: Fichero de metadatos por vídeo
+Por cada vídeo descargado, `download-videos` SHALL escribir un fichero de metadatos `{uuid}.yml` (donde `{uuid}` es el UUID Plan ₿) junto al MP4 en el directorio de archivo, con la información del vídeo obtenida de la API de PeerTube. El fichero SHALL incluir al menos:
+
+- `title` — título del vídeo
+- `description` — descripción completa (campo `description` de la API, que ya es el texto completo; `truncatedDescription` es la versión corta y no se usa)
+- `license` — licencia (etiqueta)
+- `language` — idioma del vídeo
+- `category` — categoría (si existe)
+- `tags` — etiquetas (si existen)
+- `channel` / `author` — canal o cuenta de origen
+- `duration` — duración en segundos
+- `peertube_id` y `source_url` — id y URL original en PeerTube
+- `resolution` — resolución descargada (p. ej. `360p`)
+- `published_at` — fecha de publicación (si existe)
+
+El fichero se escribe en la descarga (y se sobrescribe con `--force`); en una omisión idempotente no se reescribe.
+
+#### Scenario: Metadatos creados junto al MP4
+- **WHEN** se descarga un vídeo con UUID `<uuid>`
+- **THEN** se crea `<archive-dir>/<uuid>.yml` con `title`, `description`, `license` y los demás campos
+- **THEN** el MP4 y su `{uuid}.yml` quedan en el mismo directorio
+
+#### Scenario: Descripción completa (no truncada)
+- **WHEN** la API devuelve `description` (completa) y `truncatedDescription` (corta)
+- **THEN** el fichero de metadatos usa la `description` completa, no `truncatedDescription`
+
+#### Scenario: Re-descarga forzada sobrescribe metadatos
+- **WHEN** se ejecuta con `--force` sobre un vídeo ya descargado
+- **THEN** su `{uuid}.yml` se regenera con los metadatos actuales
+
+#### Scenario: Omisión idempotente no reescribe metadatos
+- **WHEN** un vídeo se omite por estar ya descargado (sin `--force`)
+- **THEN** su `{uuid}.yml` no se reescribe
 
 ### Requirement: Idempotencia de la descarga
 `download-videos` SHALL omitir cualquier vídeo cuyo manifiesto indique `status: downloaded`, cuyo fichero `mp4` exista en disco y cuyo `sha256` coincida; `--force` SHALL forzar la re-descarga.

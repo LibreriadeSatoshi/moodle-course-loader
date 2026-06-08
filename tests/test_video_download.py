@@ -75,7 +75,16 @@ class FakePeerTube:
         return PeerTubeVideo(
             peertube_id=peertube_id,
             title=f"Title {peertube_id}",
-            playlist_url=f"https://hls.example/{peertube_id}/master.m3u8",
+            playlist_url=f"https://hls.example/{peertube_id}/v-360.m3u8",
+            height=360,
+            description=f"Description for {peertube_id}",
+            license="CC BY-SA 4.0",
+            language="English",
+            category="Science & Technology",
+            tags=["bitcoin"],
+            channel="Main root channel",
+            duration=267,
+            published_at="2025-10-21T08:07:25.283Z",
         )
 
 
@@ -209,6 +218,7 @@ def test_downloads_peertube_en_video(tmp_path: Path) -> None:
     assert entry.peertube_id == "aee8BTojUSaDFnEPnoUUzC"
     assert entry.lang == "en"
     assert entry.title == "Title aee8BTojUSaDFnEPnoUUzC"
+    assert entry.resolution == "360p"
     assert entry.source_url and "aee8BTojUSaDFnEPnoUUzC" in entry.source_url
 
     mp4 = dl.manifest.path.parent / entry.mp4
@@ -310,28 +320,74 @@ def test_run_returns_download_result(tmp_path: Path) -> None:
     assert isinstance(result, DownloadResult)
 
 
+def test_single_course_directory_is_scanned(tmp_path: Path) -> None:
+    # Point the downloader at a course dir (course.yml directly inside),
+    # not a courses root — only that course's videos are enumerated.
+    root = tmp_path / "courses"
+    course_dir = _course(root, "btc102", _PEERTUBE_EN)
+    remux = RemuxRecorder()
+
+    dl = _downloader(course_dir, tmp_path, remux=remux)
+    result = dl.run()
+
+    assert _UUID_A in result.downloaded
+    assert len(remux.calls) == 1
+
+
 # ---------------------------------------------------------------------------
 # PeerTube client (HTTP mocked)
 # ---------------------------------------------------------------------------
 
 
+# A master playlist with variants in PeerTube's ascending order (144→240→360).
+_MASTER_M3U8 = (
+    "#EXTM3U\n"
+    "#EXT-X-STREAM-INF:BANDWIDTH=212349,RESOLUTION=256x144\n"
+    "v-144.m3u8\n"
+    "#EXT-X-STREAM-INF:BANDWIDTH=239428,RESOLUTION=426x240\n"
+    "v-240.m3u8\n"
+    "#EXT-X-STREAM-INF:BANDWIDTH=280153,RESOLUTION=640x360\n"
+    "v-360.m3u8\n"
+)
+
+
+def test_select_best_variant_picks_max_resolution() -> None:
+    from moodle_loader.videos.peertube import _select_best_variant
+
+    url, height = _select_best_variant(
+        "https://hls.example/dir/master.m3u8", _MASTER_M3U8
+    )
+    assert url == "https://hls.example/dir/v-360.m3u8"  # highest, not first
+    assert height == 360
+
+
+def test_select_best_variant_no_variants_falls_back_to_master() -> None:
+    from moodle_loader.videos.peertube import _select_best_variant
+
+    url, height = _select_best_variant(
+        "https://hls.example/m.m3u8", "#EXTM3U\n#EXT-X-ENDLIST\n"
+    )
+    assert url == "https://hls.example/m.m3u8"
+    assert height is None
+
+
 @responses.activate
-def test_peertube_get_video_parses_master_playlist() -> None:
+def test_peertube_get_video_selects_highest_resolution_variant() -> None:
     pid = "abc123"
+    master = "https://hls.example/dir/master.m3u8"
     responses.add(
         responses.GET,
         f"{PEERTUBE_HOST}/api/v1/videos/{pid}",
-        json={
-            "name": "My Video",
-            "streamingPlaylists": [{"playlistUrl": "https://hls/master.m3u8"}],
-        },
+        json={"name": "My Video", "streamingPlaylists": [{"playlistUrl": master}]},
         status=200,
     )
+    responses.add(responses.GET, master, body=_MASTER_M3U8, status=200)
 
     v = PeerTubeClient().get_video(pid)
     assert v.peertube_id == pid
     assert v.title == "My Video"
-    assert v.playlist_url == "https://hls/master.m3u8"
+    assert v.playlist_url == "https://hls.example/dir/v-360.m3u8"
+    assert v.height == 360
 
 
 @responses.activate
@@ -398,3 +454,133 @@ def test_remux_nonzero_exit_raises(
     monkeypatch.setattr("subprocess.run", lambda cmd, **kwargs: _Completed())
     with pytest.raises(FfmpegError):
         remux_to_mp4("https://hls/master.m3u8", tmp_path / "v.mp4")
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Fichero de metadatos por vídeo
+# ---------------------------------------------------------------------------
+
+
+def test_build_metadata_includes_core_fields() -> None:
+    from moodle_loader.videos.metadata import build_metadata
+
+    video = PeerTubeVideo(
+        peertube_id="pid",
+        title="T",
+        playlist_url="u",
+        height=360,
+        description="the full description",
+        license="CC BY-SA 4.0",
+        language="English",
+        category="Science & Technology",
+        tags=["bitcoin", "intro"],
+        channel="Main root channel",
+        duration=267,
+        published_at="2025-10-21T08:07:25.283Z",
+    )
+    data = build_metadata(video, planb_uuid=_UUID_A)
+
+    assert data["title"] == "T"
+    assert data["description"] == "the full description"
+    assert data["license"] == "CC BY-SA 4.0"
+    assert data["language"] == "English"
+    assert data["category"] == "Science & Technology"
+    assert data["tags"] == ["bitcoin", "intro"]
+    assert data["channel"] == "Main root channel"
+    assert data["duration"] == 267
+    assert data["published_at"] == "2025-10-21T08:07:25.283Z"
+    assert data["peertube_id"] == "pid"
+    assert data["source_url"].endswith("/w/pid")
+    assert data["resolution"] == "360p"
+    assert data["planb_uuid"] == _UUID_A
+
+
+def test_write_metadata_roundtrip(tmp_path: Path) -> None:
+    import yaml
+
+    from moodle_loader.videos.metadata import write_metadata
+
+    path = tmp_path / "x.yml"
+    write_metadata(path, {"title": "T", "license": "L"})
+    assert yaml.safe_load(path.read_text(encoding="utf-8")) == {
+        "title": "T",
+        "license": "L",
+    }
+
+
+@responses.activate
+def test_get_video_populates_metadata() -> None:
+    pid = "abc123"
+    master = "https://hls.example/dir/master.m3u8"
+    responses.add(
+        responses.GET,
+        f"{PEERTUBE_HOST}/api/v1/videos/{pid}",
+        json={
+            "name": "My Video",
+            "description": "the full description",
+            "truncatedDescription": "the full des...",
+            "licence": {"id": None, "label": "CC BY-SA 4.0"},
+            "language": {"id": "en", "label": "English"},
+            "category": {"id": 15, "label": "Science & Technology"},
+            "tags": ["bitcoin"],
+            "channel": {"displayName": "Main root channel"},
+            "duration": 267,
+            "publishedAt": "2025-10-21T08:07:25.283Z",
+            "streamingPlaylists": [{"playlistUrl": master}],
+        },
+        status=200,
+    )
+    responses.add(responses.GET, master, body=_MASTER_M3U8, status=200)
+
+    v = PeerTubeClient().get_video(pid)
+    assert v.description == "the full description"  # not truncatedDescription
+    assert v.license == "CC BY-SA 4.0"
+    assert v.language == "English"
+    assert v.category == "Science & Technology"
+    assert v.tags == ["bitcoin"]
+    assert v.channel == "Main root channel"
+    assert v.duration == 267
+    assert v.published_at == "2025-10-21T08:07:25.283Z"
+
+
+def test_download_writes_metadata_file(tmp_path: Path) -> None:
+    import yaml
+
+    root = tmp_path / "courses"
+    _course(root, "btc102", _PEERTUBE_EN)
+
+    dl = _downloader(root, tmp_path)
+    dl.run()
+
+    meta = tmp_path / "archive" / f"{_UUID_A}.yml"
+    assert meta.is_file()
+    data = yaml.safe_load(meta.read_text(encoding="utf-8"))
+    assert data["title"] == "Title aee8BTojUSaDFnEPnoUUzC"
+    assert data["license"] == "CC BY-SA 4.0"
+    assert data["resolution"] == "360p"
+
+
+def test_force_regenerates_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "courses"
+    _course(root, "btc102", _PEERTUBE_EN)
+
+    dl = _downloader(root, tmp_path)
+    dl.run()
+    meta = tmp_path / "archive" / f"{_UUID_A}.yml"
+    meta.write_text("sentinel: true\n", encoding="utf-8")
+
+    dl.run(force=True)
+    assert "sentinel" not in meta.read_text(encoding="utf-8")
+
+
+def test_skip_does_not_rewrite_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "courses"
+    _course(root, "btc102", _PEERTUBE_EN)
+
+    dl = _downloader(root, tmp_path)
+    dl.run()
+    meta = tmp_path / "archive" / f"{_UUID_A}.yml"
+    mtime = meta.stat().st_mtime_ns
+
+    dl.run()  # idempotent skip
+    assert meta.stat().st_mtime_ns == mtime

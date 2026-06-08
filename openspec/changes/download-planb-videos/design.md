@@ -46,9 +46,9 @@ Este comando es una herramienta batch ocasional, independiente de `import-planb`
 
 **Razón**: La fuente de verdad ya está parseada; no reimplementar el escaneo.
 
-### 3. Descarga: API PeerTube → master HLS → `ffmpeg -c copy` → MP4
+### 3. Descarga: API PeerTube → mejor variante HLS → `ffmpeg -c copy` → MP4
 
-**Decisión**: Por vídeo: `GET /api/v1/videos/<peertube_id>` → tomar `streamingPlaylists[0].playlistUrl`. Invocar `ffmpeg -i <master.m3u8> -map 0:v:0 -map 0:a:0 -c copy -bsf:a aac_adtstoasc <out>.mp4` (remux sin recodificar; selecciona la mejor pista de vídeo/audio). Si el remux falla, registrar `failed` (no recodificar en v1).
+**Decisión**: Por vídeo: `GET /api/v1/videos/<peertube_id>` → tomar el master HLS (`streamingPlaylists[0].playlistUrl`). **Parsear el master y elegir la variante de mayor resolución** (PeerTube las lista ascendente —144p→240p→360p—, así que la "primera" de ffmpeg sería la *más baja*). Pasar la media playlist de esa variante a `ffmpeg -i <variant.m3u8> -map 0:v:0 -map 0:a:0 -c copy -bsf:a aac_adtstoasc <out>.mp4` (remux sin recodificar). La altura elegida se guarda en el manifiesto (`resolution`, p. ej. `360p`). Si el remux falla, registrar `failed`.
 
 **Razón**: Remux es rápido y sin pérdida. `ffmpeg` resuelve HLS, segmentos fragmentados y el `aac_adtstoasc` necesario para AAC en MP4.
 
@@ -70,14 +70,23 @@ Este comando es una herramienta batch ocasional, independiente de `import-planb`
 
 **Decisión**: Un vídeo sin pista `en`, o cuyo `GET`/`ffmpeg` falle, se marca `failed` (con motivo logueado) y el lote continúa. El comando termina con código ≠ 0 si hubo algún `failed`, e imprime un resumen (descargados / omitidos / fallidos).
 
+### 7. Fichero de metadatos sidecar por vídeo
+
+**Decisión**: Junto a cada MP4 se escribe `<archive-dir>/<uuid>.yml` con los metadatos del vídeo (título, descripción completa, licencia, idioma, categoría, tags, canal, duración, URL/uuid de PeerTube, resolución, fecha de publicación). Todos los datos vienen del objeto de vídeo de la API (`GET /api/v1/videos/<id>`): su campo `description` ya es el texto completo (1246 chars en el ejemplo; `truncatedDescription` es la versión corta de 250 y no se usa), así que no hace falta el endpoint `/description`. Se escribe en la descarga y se sobrescribe con `--force`; una omisión idempotente no lo reescribe.
+
+**Razón**: Un sidecar legible hace que el MP4 archivado sea autodescriptivo (preservación) y aporta los textos que el paso de publicación reutilizará (título/descripción/atribución de licencia). YAML por coherencia con el manifiesto.
+
+**Alternativa descartada**: meter todos los metadatos dentro del manifiesto. Lo infla y mezcla el estado de descarga (que el publish amplía) con metadatos de contenido inmutables; un fichero por vídeo es más limpio y portable junto al MP4.
+
 ## Risks / Trade-offs
 
 - **Red y disponibilidad**: depende de la API PeerTube y del S3 de HLS en el momento de descarga. Reintentos simples; los fallos quedan como `failed` y se reintentan en la siguiente ejecución.
 - **Almacenamiento**: vídeos de curso completos suman muchos GB. v1 sólo `en` para acotar; el operador asume el espacio.
-- **Selección de resolución**: `ffmpeg` con master HLS elige según `-map`; podríamos no obtener siempre la máxima. Aceptable para v1; afinable con un selector de resolución futuro.
+- **Selección de resolución**: resuelto parseando el master y eligiendo la variante de mayor área de píxeles (ver Decisión 3). Nota: la "nativa" es la máxima que PlanB codificó; algunos vídeos sólo llegan a 360p y eso es lo esperado, no un fallo.
 - **Cambios en el origen**: si PlanB recorta/actualiza un vídeo, el MP4 archivado queda desfasado hasta un `--force`. No hay sync incremental por contenido en v1.
 
 ## Open Questions
 
-- ¿Resolución objetivo fija (p. ej. 720p) o siempre la máxima disponible? v1: máxima vía `-map 0:v:0`.
+- ~~¿Resolución objetivo fija (p. ej. 720p) o siempre la máxima disponible?~~ Resuelto: siempre la máxima, parseando las variantes del master HLS.
 - ¿Guardar también subtítulos/capítulos de PeerTube? Fuera de v1.
+- Nombre del sidecar: se usa `{uuid}.yml` (lo pedido), pero el MP4 es `{uuid}.{lang}.mp4`. Si en el futuro se descargan varios idiomas, habría que pasar a `{uuid}.{lang}.yml` para no colisionar. v1 (sólo `en`): `{uuid}.yml`.

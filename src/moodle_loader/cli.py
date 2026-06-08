@@ -319,5 +319,83 @@ def import_planb(
     console.print(table)
 
 
+@app.command(name="download-videos")
+def download_videos(
+    courses_root: Path = typer.Argument(
+        None, help="Root directory containing Plan ₿ course directories"
+    ),
+    course: Path = typer.Option(
+        None, "--course", help="A single Plan ₿ course directory to download"
+    ),
+    manifest: Path = typer.Option(
+        Path("video_manifest.yml"), "--manifest", help="Path to the video manifest"
+    ),
+    archive_dir: Path = typer.Option(
+        Path("videos"), "--archive-dir", help="Directory to store downloaded MP4s"
+    ),
+    lang: str = typer.Option("en", "--lang", help="Language track to download"),
+    force: bool = typer.Option(
+        False, "--force", help="Re-download videos already in the manifest"
+    ),
+    only: list[str] = typer.Option(
+        None, "--only", help="Limit to these Plan ₿ video UUIDs (repeatable)"
+    ),
+) -> None:
+    """Download Plan ₿ PeerTube course videos to local MP4s (English only).
+
+    Pass a courses root to scan every course, or --course to scan a single
+    course directory.
+    """
+    from moodle_loader.videos.downloader import VideoDownloader
+    from moodle_loader.videos.ffmpeg import FfmpegError, check_ffmpeg
+    from moodle_loader.videos.manifest import VideoManifest
+
+    if lang != "en":
+        error_console.print("Only --lang en is supported in this version.")
+        raise typer.Exit(code=1)
+    if course is not None and courses_root is not None:
+        error_console.print("Pass either a courses root or --course, not both.")
+        raise typer.Exit(code=1)
+    target = course or courses_root
+    if target is None:
+        error_console.print("Provide a courses root path or --course <course dir>.")
+        raise typer.Exit(code=1)
+    if not target.is_dir():
+        error_console.print(f"Not a directory: {target}")
+        raise typer.Exit(code=1)
+    try:
+        check_ffmpeg()
+    except FfmpegError as e:
+        error_console.print(str(e))
+        raise typer.Exit(code=1)
+
+    downloader = VideoDownloader(
+        target, VideoManifest.load(manifest), archive_dir, lang=lang
+    )
+    result = downloader.run(force=force, only=only or None)
+
+    table = Table(title="Video download", show_lines=False)
+    table.add_column("Outcome", style="dim")
+    table.add_column("Count", justify="right", style="cyan")
+    table.add_row("Downloaded", str(len(result.downloaded)))
+    table.add_row("Skipped", str(len(result.skipped)))
+    table.add_row("Failed", str(len(result.failed)))
+    console.print(table)
+
+    if result.downloaded:
+        console.print("\n[green]Saved videos:[/green]")
+        for uuid in result.downloaded:
+            entry = downloader.manifest.entries.get(uuid)
+            if entry and entry.mp4:
+                path = (downloader.manifest.path.parent / entry.mp4).resolve()
+                # soft_wrap + markup=False so long paths aren't folded mid-string
+                # or misread as Rich markup.
+                console.print(f"  {path}", markup=False, soft_wrap=True, highlight=False)
+
+    if result.failed:
+        error_console.print(f"{len(result.failed)} video(s) failed: {result.failed}")
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()

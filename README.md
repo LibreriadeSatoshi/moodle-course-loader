@@ -35,7 +35,51 @@ moodle-loader load examples/courses.yaml --dry-run
 # Load courses from a Google Sheet
 moodle-loader load-sheets <spreadsheet_id>
 moodle-loader load-sheets <spreadsheet_id> --worksheet "Hoja 1" --dry-run
+
+# Download Plan ₿ PeerTube course videos to local MP4s (English only)
+moodle-loader download-videos ../bitcoin-educational-content/courses
+# …a single course:
+moodle-loader download-videos --course ../bitcoin-educational-content/courses/btc102
+# …or specific videos by UUID:
+moodle-loader download-videos ../bitcoin-educational-content/courses \
+    --only 58e578ef-bb3c-423d-8431-0c16db8e5f29
 ```
+
+## Downloading Plan ₿ videos
+
+`download-videos` archives the PeerTube-hosted course videos as local MP4 files,
+so they can be preserved and re-hosted. It scans every `course.yml` under
+`<courses_root>`, finds videos with a PeerTube `en` track, resolves each one's
+HLS stream via the PeerTube API, and **remuxes it to MP4 with `ffmpeg`** (a
+stream copy — no re-encode). PeerTube serves only segmented HLS (no progressive
+MP4), which is why `ffmpeg` is needed to stitch the segments into one file.
+
+```bash
+moodle-loader download-videos [<courses_root>] [--course <course_dir>] \
+    [--manifest video_manifest.yml] [--archive-dir videos] \
+    [--lang en] [--force] [--only <uuid> ...]
+```
+
+Provide **either** a courses root (scans every course) **or** `--course`
+(a single course directory); `--only` narrows further to specific video UUIDs.
+
+- **Requires `ffmpeg`** on the `PATH` (e.g. `brew install ffmpeg`); the command
+  aborts up front if it's missing.
+- **English only** for now (`--lang` rejects anything but `en`). YouTube-hosted
+  videos are left untouched — Moodle embeds those directly from a link.
+- **Idempotent**: each download is recorded in the manifest (keyed by the Plan ₿
+  video UUID, with `peertube_id`, `title`, `mp4` path, `sha256`, `bytes`,
+  `status`). Re-runs skip already-downloaded videos (verified by checksum);
+  `--force` re-downloads, and a missing/corrupt MP4 is re-fetched automatically.
+- `--only` limits the run to specific Plan ₿ video UUIDs. Per-video failures are
+  recorded as `failed` and don't abort the batch; the command exits non-zero if
+  any failed.
+- Each downloaded video also gets a metadata sidecar `<archive-dir>/<uuid>.yml`
+  (title, full description, license, language, category, tags, channel,
+  duration, source URL, resolution) — so the archived MP4 is self-describing.
+
+The manifest is the hand-off to the publishing step (see the
+`publish-videos-youtube` change), which adds the re-hosted video id per entry.
 
 ## Plan ₿ videos
 

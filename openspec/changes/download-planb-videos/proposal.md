@@ -10,6 +10,7 @@ Este cambio cubre sólo la **descarga**. La publicación a una cuenta de vídeo 
 - Escanea cada `course.yml` bajo `<courses_root>` buscando entradas `videos:` con pista `peertube` en el idioma objetivo (sólo `en` en v1).
 - Para cada vídeo: resuelve el master HLS (`.m3u8`) vía la API de PeerTube (`/api/v1/videos/<id>`), descarga y **remuxa a MP4** con `ffmpeg` (sin recodificar), lo guarda en el directorio de archivo y registra la entrada en un **manifiesto** compartido (YAML), indexado por el UUID Plan ₿ del vídeo.
 - **Idempotente**: un vídeo ya descargado (manifiesto con `mp4` + `sha256` y fichero presente en disco) se omite, salvo `--force`.
+- Por cada vídeo descargado, escribe un **fichero de metadatos** `{uuid}.yml` junto al MP4 (título, descripción completa, licencia, idioma, etiquetas, canal, duración, URL original, resolución) — sidecar de preservación.
 - `ffmpeg` pasa a ser una dependencia externa del runtime (no de Python).
 
 Fuera de alcance: idiomas distintos de inglés (la estructura del manifiesto los contempla para el futuro), publicación a YouTube/cuenta externa (cambio `publish-videos-youtube`), y el uso del manifiesto como override en el importador (cambio futuro). Vídeos sólo en YouTube en `course.yml` no se tocan (ya embeben vía el filtro multimedia de Moodle).

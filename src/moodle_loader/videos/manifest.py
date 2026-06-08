@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
 from pydantic import BaseModel, ConfigDict
 
 
@@ -23,6 +24,7 @@ class VideoEntry(BaseModel):
     peertube_id: str
     lang: str = "en"
     title: str | None = None
+    resolution: str | None = None  # e.g. "360p" (the downloaded variant)
     mp4: str | None = None  # path relative to the manifest file
     sha256: str | None = None
     bytes: int | None = None
@@ -42,8 +44,25 @@ class VideoManifest:
     @classmethod
     def load(cls, path: Path | str) -> VideoManifest:
         """Load a manifest from *path*; a missing file yields empty entries."""
-        raise NotImplementedError
+        path = Path(path)
+        if not path.is_file():
+            return cls(path, {})
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        entries = {
+            str(uuid): VideoEntry(**fields) for uuid, fields in data.items()
+        }
+        return cls(path, entries)
 
     def save(self) -> None:
         """Persist the manifest atomically (temp file + rename)."""
-        raise NotImplementedError
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            uuid: entry.model_dump(exclude_none=True)
+            for uuid, entry in self.entries.items()
+        }
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(
+            yaml.safe_dump(data, sort_keys=True, allow_unicode=True),
+            encoding="utf-8",
+        )
+        tmp.replace(self.path)
