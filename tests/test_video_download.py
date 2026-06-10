@@ -442,6 +442,11 @@ def test_remux_builds_copy_command(
     assert "https://hls/master.m3u8" in cmd
     assert str(out) in cmd
     assert "-c" in cmd and "copy" in cmd  # remux, no re-encode
+    # Reproducible/byte-identical output across machines: bitexact muxing and
+    # no encoder/timestamp metadata.
+    assert "-fflags" in cmd and "+bitexact" in cmd
+    assert "-flags" in cmd
+    assert "-map_metadata" in cmd and "-1" in cmd
 
 
 def test_remux_nonzero_exit_raises(

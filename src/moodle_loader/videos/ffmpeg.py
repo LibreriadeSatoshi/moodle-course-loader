@@ -31,6 +31,8 @@ def remux_to_mp4(master_url: str, out_path: Path | str) -> None:
     cmd = [
         "ffmpeg",
         "-y",
+        "-fflags",
+        "+bitexact",  # deterministic demux/mux
         "-i",
         master_url,
         "-map",
@@ -41,6 +43,10 @@ def remux_to_mp4(master_url: str, out_path: Path | str) -> None:
         "copy",
         "-bsf:a",
         "aac_adtstoasc",
+        "-flags",
+        "+bitexact",  # don't write encoder tag / version into the container
+        "-map_metadata",
+        "-1",  # drop source metadata (incl. timestamps) → byte-identical output
         str(out_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
