@@ -172,14 +172,23 @@ def _inject_videos(html: str, snippets: list[str]) -> str:
     return html
 
 
-def _rewrite_planb_links(text: str, link_map: dict[str, str]) -> str:
+def _rewrite_planb_links(
+    text: str,
+    link_map: dict[str, str],
+    course_titles: dict[str, str] | None = None,
+) -> str:
     """Rewrite planb.academy links in a markdown body.
 
     * Course links whose UUID is in *link_map* become the mapped internal Moodle
       URL (a deep ``/chapterUuid`` suffix is dropped — it points at the course).
     * Every other planb.academy link is removed: the ``[label](url)`` form keeps
       its ``label``; a bare URL is dropped entirely.
+
+    A bare (label-less) course URL is rendered with the text
+    ``See course: {title}`` when *course_titles* has the course's title;
+    otherwise the URL path is used as the link text.
     """
+    course_titles = course_titles or {}
 
     def _md_repl(m: re.Match) -> str:  # type: ignore[type-arg]
         label, url = m.group(1), m.group(2)
@@ -193,10 +202,18 @@ def _rewrite_planb_links(text: str, link_map: dict[str, str]) -> str:
     # 1. Markdown links first, so their URLs aren't caught by the bare passes.
     text = _PLANB_MD_LINK_RE.sub(_md_repl, text)
 
-    # 2. Bare course URLs: resolvable → autolink (clickable), else drop.
+    # 2. Bare course URLs: resolvable → markdown link (clickable), else drop.
+    #    A markdown link (not an autolink) is used because the target is a
+    #    root-relative path; CommonMark autolinks require an absolute scheme.
+    #    The visible text is "See course: {title}" when the title is known.
     def _course_repl(m: re.Match) -> str:  # type: ignore[type-arg]
-        target = link_map.get(m.group(1))
-        return f"<{target}>" if target else ""
+        uuid = m.group(1)
+        target = link_map.get(uuid)
+        if not target:
+            return ""
+        title = course_titles.get(uuid)
+        label = f"See course: {title}" if title else target
+        return f"[{label}]({target})"
 
     text = _PLANB_COURSE_RE.sub(_course_repl, text)
 
@@ -225,6 +242,7 @@ def _render_html(
     asset_url_map: dict[str, str],
     link_map: dict[str, str] | None = None,
     videos: dict[str, PlanBVideo] | None = None,
+    course_titles: dict[str, str] | None = None,
 ) -> str:
     """Render a Plan ₿ markdown body to HTML suitable for a Moodle page.
 
@@ -252,7 +270,7 @@ def _render_html(
         return f"![{alt}]({url})"
 
     content = _ASSET_IMG_RE.sub(_replace_asset, content)
-    content = _rewrite_planb_links(content, link_map or {})
+    content = _rewrite_planb_links(content, link_map or {}, course_titles or {})
     html = _MD.render(content)
     html = _inject_videos(html, video_snippets)
     html = _IMG_TAG_RE.sub(f'<img style="{_RESPONSIVE_IMG_STYLE}"', html)
@@ -295,9 +313,10 @@ class PlanBCourseBuilder:
         course_id = self._create_course(category_id)
         asset_url_map = self._build_asset_url_map()
         link_map = self._build_link_map()
+        course_titles = self._build_course_titles()
         self._set_course_image()
         sections_created = self._create_sections()
-        pages_created = self._create_pages(asset_url_map, link_map)
+        pages_created = self._create_pages(asset_url_map, link_map, course_titles)
         return PlanBBuildResult(
             course_id=course_id,
             sections_created=sections_created,
@@ -405,8 +424,31 @@ class PlanBCourseBuilder:
                     uuid,
                 )
                 continue
-            link_map[uuid] = f"{self._client.base_url}/course/view.php?id={course_id}"
+            # Root-relative so links resolve against whatever host Moodle is
+            # served on (dev or prod), instead of baking the configured
+            # MOODLE_URL (e.g. http://localhost:8888) into stored page HTML.
+            link_map[uuid] = f"/course/view.php?id={course_id}"
         return link_map
+
+    def _build_course_titles(self) -> dict[str, str]:
+        """Build ``{planb_uuid → course title}`` for referenced, resolvable courses.
+
+        Used to render bare cross-course links as ``See course: {title}``. The
+        current course uses its own ``fullname``; others use the Moodle course's
+        ``fullname`` (falling back to the shortname).
+        """
+        titles: dict[str, str] = {}
+        for uuid in self._referenced_course_uuids():
+            shortname = self._course_uuid_map.get(uuid)
+            if shortname is None:
+                continue
+            if uuid == self._spec.planb_id:
+                titles[uuid] = self._spec.fullname
+            else:
+                existing = self._client.get_course_by_shortname(shortname)
+                if existing:
+                    titles[uuid] = existing.get("fullname") or shortname
+        return titles
 
     def _build_asset_url_map(self) -> dict[str, str]:
         """Build ``{relative_path → data_uri}`` for every asset in the spec.
@@ -506,7 +548,10 @@ class PlanBCourseBuilder:
         return titles
 
     def _create_pages(
-        self, asset_url_map: dict[str, str], link_map: dict[str, str]
+        self,
+        asset_url_map: dict[str, str],
+        link_map: dict[str, str],
+        course_titles: dict[str, str] | None = None,
     ) -> list[str]:
         """Create one Moodle Page activity per chapter, in section order."""
         titles: list[str] = []
@@ -514,7 +559,11 @@ class PlanBCourseBuilder:
             section_number = i + 1
             for chapter in part.chapters:
                 content = _render_html(
-                    chapter.body, asset_url_map, link_map, self._spec.videos
+                    chapter.body,
+                    asset_url_map,
+                    link_map,
+                    self._spec.videos,
+                    course_titles,
                 )
                 log.debug(
                     "Creating page %r in section %d", chapter.title, section_number

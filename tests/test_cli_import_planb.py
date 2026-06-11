@@ -146,11 +146,44 @@ def test_invalid_course_source_error_exits_nonzero(tmp_path: Path) -> None:
     assert result.exit_code != 0
 
 
-def test_normal_mode_exits_nonzero(tmp_path: Path) -> None:
-    """Without --dry-run the command should fail until the builder is implemented."""
+def test_normal_mode_invokes_builder(tmp_path: Path, monkeypatch) -> None:
+    """Normal mode (no --dry-run) builds the course via PlanBCourseBuilder.
+
+    Moodle access is fully mocked so the test is deterministic and never hits
+    the network (the builder is exercised for real in test_planb_builder.py).
+    """
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import moodle_loader.cli as cli_module
+    from moodle_loader.models import PlanBBuildResult
+
     course_dir = _make_course(tmp_path)
+
+    monkeypatch.setattr(
+        cli_module,
+        "_build_settings",
+        lambda: SimpleNamespace(default_category_name="Miscellaneous"),
+    )
+    monkeypatch.setattr(cli_module, "MoodleClient", MagicMock())
+    monkeypatch.setattr(
+        "moodle_loader.sources.planb_source.build_course_uuid_map",
+        lambda root: {},
+    )
+    fake_builder = MagicMock()
+    fake_builder.return_value.build.return_value = PlanBBuildResult(
+        course_id=99,
+        sections_created=["Part One"],
+        pages_created=["Chapter A"],
+        assets_uploaded=0,
+        wiped=False,
+    )
+    monkeypatch.setattr(cli_module, "PlanBCourseBuilder", fake_builder)
+
     result = runner.invoke(app, ["import-planb", str(course_dir)])
-    assert result.exit_code != 0
+
+    assert result.exit_code == 0, result.output
+    fake_builder.return_value.build.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

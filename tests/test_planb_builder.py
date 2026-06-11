@@ -476,13 +476,14 @@ def test_render_html_table_preserves_column_alignment() -> None:
 # ---------------------------------------------------------------------------
 
 _KNOWN_UUID = "a51c7ceb-e079-4ac3-bf69-6700b985a082"
-_LINK_MAP = {_KNOWN_UUID: "https://moodle.example.com/course/view.php?id=42"}
+# Root-relative, host-independent (matches what _build_link_map produces).
+_LINK_MAP = {_KNOWN_UUID: "/course/view.php?id=42"}
 
 
 def test_render_html_rewrites_known_course_link() -> None:
     body = f"See our HIS 201 course:\n\nhttps://planb.academy/courses/{_KNOWN_UUID}"
     html = _render_html(body, {}, _LINK_MAP)
-    assert "https://moodle.example.com/course/view.php?id=42" in html
+    assert 'href="/course/view.php?id=42"' in html
     assert "planb.academy" not in html
 
 
@@ -498,7 +499,7 @@ def test_render_html_drops_chapter_in_deep_link() -> None:
     body = f"[miner chapter](https://planb.academy/courses/{_KNOWN_UUID}/{chapter})"
     html = _render_html(body, {}, _LINK_MAP)
     # Points at the course; the chapter uuid is gone.
-    assert 'href="https://moodle.example.com/course/view.php?id=42"' in html
+    assert 'href="/course/view.php?id=42"' in html
     assert ">miner chapter</a>" in html
     assert chapter not in html
 
@@ -543,6 +544,89 @@ def test_render_html_link_map_optional() -> None:
     body = f"https://planb.academy/courses/{_KNOWN_UUID}"
     html = _render_html(body, {})
     assert "planb.academy" not in html
+
+
+# ---------------------------------------------------------------------------
+# Cross-course links are root-relative (host-independent), not absolute.
+# Regression: links used to bake the configured MOODLE_URL (e.g.
+# http://localhost:8888) into stored page HTML.
+# ---------------------------------------------------------------------------
+
+
+def test_build_link_map_is_root_relative() -> None:
+    body = f"see https://planb.academy/courses/{_KNOWN_UUID}"
+    spec = make_spec(parts=[make_part("P", [make_chapter("C", body)])])
+    client = make_client()
+    client.base_url = "http://localhost:8888"
+    client.get_course_by_shortname.return_value = {"id": 30, "shortname": "his201"}
+
+    builder = PlanBCourseBuilder(client, spec, course_uuid_map={_KNOWN_UUID: "his201"})
+    link_map = builder._build_link_map()
+
+    assert link_map[_KNOWN_UUID] == "/course/view.php?id=30"
+    assert "localhost" not in link_map[_KNOWN_UUID]
+    assert "http" not in link_map[_KNOWN_UUID]
+
+
+def test_build_does_not_bake_host_into_cross_course_links() -> None:
+    body = f"see https://planb.academy/courses/{_KNOWN_UUID}"
+    spec = make_spec(parts=[make_part("P", [make_chapter("C", body)])])
+    client = make_client()
+    client.base_url = "http://localhost:8888"
+    client.get_course_by_shortname.return_value = {"id": 30, "shortname": "his201"}
+
+    PlanBCourseBuilder(client, spec, course_uuid_map={_KNOWN_UUID: "his201"}).build()
+
+    content = client.create_page.call_args.kwargs["content"]
+    assert 'href="/course/view.php?id=30"' in content
+    assert "localhost" not in content
+
+
+# ---------------------------------------------------------------------------
+# Cross-course link text: bare URLs show "See course: {title}".
+# (cross-course-link-text change — not yet implemented; these are expected red.)
+# ---------------------------------------------------------------------------
+
+
+def test_bare_course_link_shows_see_course_title() -> None:
+    body = f"https://planb.academy/courses/{_KNOWN_UUID}"
+    html = _render_html(body, {}, _LINK_MAP, course_titles={_KNOWN_UUID: "Bitcoin History"})
+    assert ">See course: Bitcoin History</a>" in html
+    assert 'href="/course/view.php?id=42"' in html
+    # The raw path is no longer the visible text.
+    assert ">/course/view.php?id=42</a>" not in html
+
+
+def test_markdown_course_link_keeps_its_label() -> None:
+    body = f"[miner chapter](https://planb.academy/courses/{_KNOWN_UUID})"
+    html = _render_html(body, {}, _LINK_MAP, course_titles={_KNOWN_UUID: "Bitcoin History"})
+    assert ">miner chapter</a>" in html
+    assert "See course:" not in html
+
+
+def test_bare_course_link_without_title_falls_back() -> None:
+    # Resolvable but no title known → current behavior (path as link text).
+    body = f"https://planb.academy/courses/{_KNOWN_UUID}"
+    html = _render_html(body, {}, _LINK_MAP, course_titles={})
+    assert 'href="/course/view.php?id=42"' in html
+    assert "See course:" not in html
+
+
+def test_build_renders_see_course_title_for_bare_links() -> None:
+    body = f"see https://planb.academy/courses/{_KNOWN_UUID}"
+    spec = make_spec(parts=[make_part("P", [make_chapter("C", body)])])
+    client = make_client()
+    client.get_course_by_shortname.return_value = {
+        "id": 30,
+        "fullname": "Bitcoin History",
+        "shortname": "his201",
+    }
+
+    PlanBCourseBuilder(client, spec, course_uuid_map={_KNOWN_UUID: "his201"}).build()
+
+    content = client.create_page.call_args.kwargs["content"]
+    assert "See course: Bitcoin History" in content
+    assert 'href="/course/view.php?id=30"' in content
 
 
 # ---------------------------------------------------------------------------
