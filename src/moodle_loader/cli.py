@@ -372,7 +372,11 @@ def download_videos(
     downloader = VideoDownloader(
         target, VideoManifest.load(manifest), archive_dir, lang=lang
     )
-    result = downloader.run(force=force, only=only or None)
+    result = downloader.run(
+        force=force,
+        only=only or None,
+        reporter=lambda msg: console.print(msg, markup=False, highlight=False),
+    )
 
     table = Table(title="Video download", show_lines=False)
     table.add_column("Outcome", style="dim")

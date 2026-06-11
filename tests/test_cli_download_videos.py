@@ -43,7 +43,7 @@ def test_download_videos_runs_and_prints_summary(
 ) -> None:
     captured = {}
 
-    def fake_run(self, *, force=False, only=None):  # type: ignore[no-untyped-def]
+    def fake_run(self, *, force=False, only=None, reporter=None):  # type: ignore[no-untyped-def]
         captured["force"] = force
         captured["only"] = only
         return DownloadResult(downloaded=["58e578ef-bb3c-423d-8431-0c16db8e5f29"])
@@ -75,7 +75,7 @@ def test_download_videos_passes_only_and_force(
 ) -> None:
     captured = {}
 
-    def fake_run(self, *, force=False, only=None):  # type: ignore[no-untyped-def]
+    def fake_run(self, *, force=False, only=None, reporter=None):  # type: ignore[no-untyped-def]
         captured["force"] = force
         captured["only"] = only
         return DownloadResult()
@@ -119,7 +119,7 @@ def test_download_videos_prints_saved_locations(
 
     uuid = "58e578ef-bb3c-423d-8431-0c16db8e5f29"
 
-    def fake_run(self, *, force=False, only=None):  # type: ignore[no-untyped-def]
+    def fake_run(self, *, force=False, only=None, reporter=None):  # type: ignore[no-untyped-def]
         self.manifest.entries[uuid] = VideoEntry(
             peertube_id="x", mp4=f"archive/{uuid}.en.mp4", status="downloaded"
         )
@@ -151,7 +151,7 @@ def test_download_videos_course_option(
 ) -> None:
     captured = {}
 
-    def fake_run(self, *, force=False, only=None):  # type: ignore[no-untyped-def]
+    def fake_run(self, *, force=False, only=None, reporter=None):  # type: ignore[no-untyped-def]
         captured["root"] = str(self.courses_root)
         return DownloadResult()
 

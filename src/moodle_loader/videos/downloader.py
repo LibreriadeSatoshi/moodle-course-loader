@@ -71,20 +71,22 @@ class VideoDownloader:
             return [self.courses_root / "course.yml"]
         return sorted(self.courses_root.glob("*/course.yml"))
 
-    def _enumerate(self) -> dict[str, str]:
-        """Map ``{planb_uuid → peertube_id}`` for videos with a track in *lang*.
+    def _enumerate(self) -> dict[str, tuple[str, str]]:
+        """Map ``{planb_uuid → (peertube_id, course)}`` for videos with a *lang* track.
 
-        Scans the relevant ``course.yml`` file(s); the first occurrence of a
-        UUID wins (dedup across courses). YouTube-only videos are skipped.
+        ``course`` is the course directory name (e.g. ``btc102``). Scans the
+        relevant ``course.yml`` file(s); the first occurrence of a UUID wins
+        (dedup across courses). YouTube-only videos are skipped.
         """
-        videos: dict[str, str] = {}
+        videos: dict[str, tuple[str, str]] = {}
         for course_yml in self._course_ymls():
+            course = course_yml.parent.name
             for uuid, video in _read_videos(course_yml).items():
                 if uuid in videos:
                     continue
                 peertube_id = video.peertube.get(self.lang)
                 if peertube_id:
-                    videos[uuid] = peertube_id
+                    videos[uuid] = (peertube_id, course)
         return videos
 
     def _is_current(self, uuid: str) -> bool:
@@ -98,21 +100,38 @@ class VideoDownloader:
         return not entry.sha256 or _sha256(mp4) == entry.sha256
 
     def run(
-        self, *, force: bool = False, only: list[str] | None = None
+        self,
+        *,
+        force: bool = False,
+        only: list[str] | None = None,
+        reporter: Callable[[str], None] | None = None,
     ) -> DownloadResult:
-        """Download all pending PeerTube videos; idempotent unless *force*."""
+        """Download all pending PeerTube videos; idempotent unless *force*.
+
+        *reporter*, if given, is called with a one-line progress message for
+        each video (skipped / downloading / failed), e.g. for live CLI output.
+        """
+
+        def report(msg: str) -> None:
+            if reporter:
+                reporter(msg)
+
         result = DownloadResult()
         videos = self._enumerate()
         if only is not None:
             wanted = set(only)
-            videos = {u: pid for u, pid in videos.items() if u in wanted}
+            videos = {u: v for u, v in videos.items() if u in wanted}
 
-        for uuid, peertube_id in videos.items():
+        total = len(videos)
+        for index, (uuid, (peertube_id, course)) in enumerate(videos.items(), 1):
+            where = f"[{index}/{total}] {course} {uuid}"
             if not force and self._is_current(uuid):
                 log.info("Skipping %s (already downloaded)", uuid)
+                report(f"skip      {where} (already downloaded)")
                 result.skipped.append(uuid)
                 continue
 
+            report(f"download  {where} …")
             try:
                 video = self.peertube.get_video(peertube_id)
                 out_path = self.archive_dir / f"{uuid}.{self.lang}.mp4"
@@ -137,6 +156,7 @@ class VideoDownloader:
                 result.downloaded.append(uuid)
             except Exception as exc:  # noqa: BLE001 — record and continue the batch
                 log.warning("Failed to download %s (%s): %s", uuid, peertube_id, exc)
+                report(f"failed    {where} ({exc})")
                 self.manifest.entries[uuid] = VideoEntry(
                     peertube_id=peertube_id,
                     lang=self.lang,

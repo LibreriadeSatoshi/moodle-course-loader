@@ -320,6 +320,34 @@ def test_run_returns_download_result(tmp_path: Path) -> None:
     assert isinstance(result, DownloadResult)
 
 
+def test_run_reports_downloading_with_course(tmp_path: Path) -> None:
+    root = tmp_path / "courses"
+    _course(root, "btc102", _PEERTUBE_EN)
+    messages: list[str] = []
+
+    _downloader(root, tmp_path).run(reporter=messages.append)
+
+    joined = "\n".join(messages)
+    assert "download" in joined.lower()
+    assert "btc102" in joined  # course shown
+    assert _UUID_A in joined  # video shown
+
+
+def test_run_reports_skipped_videos(tmp_path: Path) -> None:
+    root = tmp_path / "courses"
+    _course(root, "btc102", _PEERTUBE_EN)
+
+    dl = _downloader(root, tmp_path)
+    dl.run()  # first run downloads
+    messages: list[str] = []
+    dl.run(reporter=messages.append)  # second run skips
+
+    joined = "\n".join(messages)
+    assert "skip" in joined.lower()
+    assert "btc102" in joined
+    assert _UUID_A in joined
+
+
 def test_single_course_directory_is_scanned(tmp_path: Path) -> None:
     # Point the downloader at a course dir (course.yml directly inside),
     # not a courses root — only that course's videos are enumerated.
